@@ -1,13 +1,41 @@
 use crate::ray_tracing::{Scene, Camera};
 use crate::color::Color;
-use image::{Rgb, RgbImage};
+use image::{Rgb, RgbImage, Pixel};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Duration;
 use console::Term;
 use std::io::Write;
 
+pub struct RenderStat{
+    duration: std::time::Duration,
+    pixels_rendered: usize,
+    pixels_per_second: f64,
+}
+
+impl RenderStat {
+    pub fn new(duration: std::time::Duration, pixels_rendered: usize) -> RenderStat {
+        let pixels_per_second = (pixels_rendered as f64) / duration.as_secs_f64();
+        RenderStat { duration, pixels_rendered, pixels_per_second}
+    }
+
+    pub fn duration(&self) -> std::time::Duration {
+        self.duration
+    }
+
+    pub fn pixels_rendered(&self) -> usize {
+        self.pixels_rendered
+    }
+
+    pub fn pixels_per_second(&self) -> f64 {
+        self.pixels_per_second
+    }
+}
+
+
+
 pub trait Renderer {
-    fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> RgbImage;
+    fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> (RgbImage, RenderStat);
 }
 
 pub struct TileRenderer {
@@ -98,7 +126,9 @@ impl TileRenderer {
 }
 
 impl Renderer for TileRenderer {
-    fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> RgbImage {
+    fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> (RgbImage, RenderStat) {
+
+        let start = std::time::Instant::now();
         // divide image into blocks
         let width_in_blocks = (camera.image_width() + self.block_size.get() - 1) / self.block_size.get();
         let height_in_blocks = (camera.image_height() as usize+ self.block_size.get() - 1) / self.block_size.get();
@@ -152,17 +182,23 @@ impl Renderer for TileRenderer {
 
         drop(update_tx);
 
+        let mut term = Term::stderr();
         // polling update phase
+        let console_width = match term.size_checked() {
+            Some((_, width)) => width,
+            None => 120 , // assume 120 cols
+        };
 
-        let waiting_char = " ▪ ";
-        let in_progress_char = "▒▒▒";
-        let complete_char = "███";
-        let indicator_size = waiting_char.chars().count();
+        let (waiting_char, in_progress_char, complete_char, indicator_size) = if console_width as usize >= width_in_blocks * 3 {
+            (" ▪ ", "▒▒▒", "███", 3)
+        } else {
+            ("▪", "▒", "█", 1)
+        };
 
         let mut results = vec![TileRenderResult::default(); width_in_blocks * height_in_blocks];
         
-        let mut term = Term::stderr();
-
+       
+        writeln!(term, "Terminal width {}", console_width).unwrap_or_default();
         writeln!(term, "Rendering {} by {} image in {} by {} blocks...", camera.image_width(), camera.image_height(), self.block_size, self.block_size).unwrap_or_default();
         writeln!(term, "Using {} threads", self.num_threads).unwrap_or_default();
 
@@ -217,16 +253,21 @@ impl Renderer for TileRenderer {
             handle.join().unwrap();
         }
 
+        let duration = std::time::Instant::now().duration_since(start);
+
         writeln!(term, "Rendering Completed!").unwrap_or_default();
         term.flush().unwrap_or_default();
 
-        RgbImage::from_fn(camera.image_width().try_into().unwrap(), camera.image_height().try_into().unwrap(), |col, row| {
-            let block_index_x = (col as usize) / self.block_size;
-            let block_index_y = (row as usize) / self.block_size;
-            let intra_block_x = (col as usize) % self.block_size;
-            let intra_block_y = (row as usize) % self.block_size;
+        (
+            RgbImage::from_fn(camera.image_width().try_into().unwrap(), camera.image_height().try_into().unwrap(), |col, row| {
+                let block_index_x = (col as usize) / self.block_size;
+                let block_index_y = (row as usize) / self.block_size;
+                let intra_block_x = (col as usize) % self.block_size;
+                let intra_block_y = (row as usize) % self.block_size;
 
-            results[block_index_x + block_index_y * width_in_blocks].output[intra_block_x + intra_block_y * self.block_size.get()]
-        })
+                results[block_index_x + block_index_y * width_in_blocks].output[intra_block_x + intra_block_y * self.block_size.get()]
+            }),
+            RenderStat::new(duration, camera.image_height() * camera.image_width())
+        )
     }
 }

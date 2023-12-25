@@ -66,11 +66,12 @@ impl Material for Metal {
 #[derive(Clone)]
 pub struct Dielectric {
     index_of_refraction: f64,
+    hollow: bool,
 }
 
 impl Dielectric {
-    pub fn new(index_of_refraction: f64) -> Dielectric {
-        Dielectric { index_of_refraction }
+    pub fn new(index_of_refraction: f64, hollow: bool) -> Dielectric {
+        Dielectric { index_of_refraction, hollow}
     }
 
     fn reflectance(cosine: f64, index_of_refraction: f64) -> f64 {
@@ -83,15 +84,16 @@ impl Material for Dielectric {
     fn get_hit_result(&self, ray: &Ray, hit_record: &HitRecord) -> HitResult {
         let refraction_ratio = if hit_record.front_face() {1.0 / self.index_of_refraction} else {self.index_of_refraction};
 
-        let cos_theta = (-ray.direction()).dot(&hit_record.normal()).min(1.0);
+        let normal = if self.hollow {-hit_record.normal()} else {hit_record.normal()};
+        let cos_theta = (-ray.direction()).dot(&normal).min(1.0);
         let sin_theta = (1.0 - cos_theta.powi(2)).sqrt();
 
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
 
         let refracted_direction = if cannot_refract || Dielectric::reflectance(cos_theta, refraction_ratio) > thread_rng().gen_range(0.0..1.0){
-            ray.direction().reflect(&hit_record.normal())
+            ray.direction().reflect(&normal)
         } else {
-            ray.direction().refract(&hit_record.normal(), refraction_ratio)
+            ray.direction().refract(&normal, refraction_ratio)
         };
         
         HitResult::new_scattered(
