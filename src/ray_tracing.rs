@@ -1,5 +1,4 @@
-use crate::{geometry::{Vec3, Point3}, color::Color};
-use crate::materials::Material;
+use crate::{geometry::{Vec3, Point3}, color::Color, objects::Object};
 use crate::objects::{HitRecord, HitResult, Hittable};
 
 use std::{sync::Arc, fmt::Debug};
@@ -97,7 +96,12 @@ impl Ray {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Scene {
-    objects: Vec<Arc<dyn Hittable>>
+    objects: Vec<Object>
+}
+
+struct RayState {
+    color: Color,
+    ray: Option<Ray>
 }
 
 impl Scene {
@@ -105,29 +109,32 @@ impl Scene {
         Scene { objects: Vec::new() }
     }
 
-    pub fn from_list(list: &[Arc<dyn Hittable>]) -> Scene {
+    pub fn from_list(list: &[Object]) -> Scene {
         Scene { objects: list.to_vec()}
     }
 
-    pub fn add(&mut self, object: &Arc<dyn Hittable>) {
-        self.objects.push(object.clone());
+    pub fn add(&mut self, object: Object) {
+        self.objects.push(object);
     }
 
+    
     pub fn hit(&self, ray: &Ray, t_range: std::ops::Range<f64>) -> Option<HitRecord> {
-        let mut hit_record: Option<HitRecord> = None;
-        let mut search_range = t_range;
+        // let mut hit_record: Option<HitRecord> = None;
+        // let mut search_range = t_range;
 
-        for object in &self.objects {
-            hit_record = match object.hit(ray, &search_range) {
-                Some(new_hit_record) => {
-                    search_range = search_range.start..new_hit_record.t();
-                    Some(new_hit_record)
-                },
-                None => hit_record,
-            }
-        }
+        // for object in &self.objects {
+        //     hit_record = match object.hit(ray, &search_range) {
+        //         Some(new_hit_record) => {
+        //             search_range = search_range.start..new_hit_record.t();
+        //             Some(new_hit_record)
+        //         },
+        //         None => hit_record,
+        //     }
+        // }
 
-        hit_record
+        self.objects.iter().map(|obj| {
+            obj.hit(ray, &t_range)
+        }).filter_map(|e| e).min_by_key(|h| {ordered_float::OrderedFloat::from(h.t())})
     }
 
     pub fn trace(&self, ray: &Ray, depth_limit: usize) -> Color {
@@ -155,6 +162,50 @@ impl Scene {
                 },
             }
         }
+    }
+
+    pub fn trace_rays(&self, rays: &[Ray], depth_limit: usize) -> Vec<Color> {
+        let mut ray_stats = rays.iter().map(|r| {
+            RayState {
+                color: Color::white(),
+                ray: Some(*r)
+            }
+        }).collect::<Vec<_>>();
+
+        for _ in 0..depth_limit {
+            for ray_state in &mut ray_stats {
+                
+                match ray_state.ray {
+                    Some(ray) => {
+                        match self.hit(&ray, 0.001..f64::INFINITY) {
+                            Some(hit_record) => {
+                                let hit_result = hit_record.hit_result(&ray);
+                                ray_state.color = ray_state.color * hit_result.attenuation();
+                                ray_state.ray = hit_result.scattered_ray().copied();
+                            },
+                            None => {
+                                let direction = ray.direction();
+                                let a = 0.5 * (direction.y() + 1.0);
+                                ray_state.color = ray_state.color * Color::new(
+                                    (1.0 - a) + a * 0.5, 
+                                    (1.0 - a) + a * 0.7, 
+                                    (1.0 - a) + a * 1.0
+                                );
+                                ray_state.ray = None;
+                            },
+                        }
+                    },
+                    None => (),
+                }
+            }
+        }
+
+        ray_stats.iter().map(|rs| {
+            match rs.ray {
+                Some(_) => Color::black(),
+                None => rs.color,
+            }
+        }).collect()
     }
 }
  

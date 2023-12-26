@@ -1,6 +1,3 @@
-use rand::seq::IteratorRandom;
-use toml::Table;
-
 use crate::geometry::{Vec3, Point3};
 use crate::materials::Material;
 use crate::ray_tracing::Ray;
@@ -10,17 +7,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::fmt::Debug;
 
-pub fn get_object_list(toml_object_list: &toml::value::Array, material_table: &HashMap<String, Arc<dyn Material>>) -> Vec<Arc<dyn Hittable>> {
+#[derive(Debug)]
+#[derive(Clone)]
+pub enum Object {
+    Sphere(Sphere),
+}
+
+impl Object {
+    pub fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
+        match self {
+            Object::Sphere(s) => s.hit(ray, t_range),
+        }
+    }
+}
+
+pub fn get_object_list(toml_object_list: &toml::value::Array, material_table: &HashMap<String, Arc<dyn Material>>) -> Vec<Object> {
     toml_object_list.iter().map(|value| {
         load_object_from_toml(value.as_table().unwrap(), material_table)
     }).collect()
 }
 
-pub fn load_object_from_toml(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Arc<dyn Hittable> {
+pub fn load_object_from_toml(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Object {
     let object_type = table["type"].as_str().unwrap().to_ascii_lowercase();
     
     if object_type == "sphere" {
-        Sphere::from_table(table, material_table)
+        Object::Sphere(Sphere::from_table(table, material_table))
     } else {
         panic!("Unknown object type {}", object_type)
     }
@@ -28,16 +39,16 @@ pub fn load_object_from_toml(table: &toml::Table, material_table: &HashMap<Strin
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct HitRecord {
+pub struct HitRecord<'a> {
     location: Point3,
     normal: Vec3,
     t: f64,
     front_face: bool,
-    material: Arc<dyn Material>,
+    material: &'a Arc<dyn Material>,
 }
 
-impl HitRecord {
-    pub fn new(ray: &Ray, location: Point3, outward_normal: Vec3, t: f64, material: &Arc<dyn Material>) -> HitRecord {
+impl HitRecord<'_> {
+    pub fn new <'a> (ray: &Ray, location: Point3, outward_normal: Vec3, t: f64, material: &'a Arc<dyn Material>) -> HitRecord<'a> {
         debug_assert!((outward_normal.length() - 1.0).abs() < 1E-9, "expecting 1.0, got {}", outward_normal.length());
         
         
@@ -53,7 +64,7 @@ impl HitRecord {
             normal: normal,
             t: t,
             front_face: front_face,
-            material: material.clone()
+            material: material
         }
     }
 
@@ -81,7 +92,7 @@ impl HitRecord {
 pub trait Hittable : Debug + Sync + Send {
     fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord>;
 
-    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Arc<dyn Hittable> where Self: Sized;
+    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized;
 }
 
 #[derive(Clone)]
@@ -133,13 +144,13 @@ impl Hittable for Sphere {
 
     }
 
-    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Arc<dyn Hittable> where Self: Sized {
+    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized {
         let center = Point3::from_toml(table["center"].as_table().unwrap());
         let radius = table["radius"].as_float().unwrap();
         let material_name = table["material"].as_str().unwrap();
         let material = material_table.get(material_name).unwrap();
 
-        Arc::new(Sphere::new(center, radius, material))
+        Sphere::new(center, radius, material)
     }
 }
 
