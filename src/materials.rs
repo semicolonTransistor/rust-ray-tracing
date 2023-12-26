@@ -2,11 +2,39 @@ use rand::{thread_rng, Rng};
 
 use crate::geometry::Vec3;
 use crate::color::Color;
-use crate::ray_tracing::{Ray, HitRecord, HitResult};
+use crate::ray_tracing::Ray;
+use crate::objects::{HitRecord, HitResult};
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
+
+pub fn get_materials(table: &toml::Table) -> HashMap<String, Arc<dyn Material>>{
+    table.iter().map(|(key, value)| {
+        (
+            key.clone(),
+            load_material_from_toml(value.as_table().unwrap())
+        )
+    }).collect()
+}
+
+pub fn load_material_from_toml(table: &toml::Table) -> Arc<dyn Material> {
+    let material_type = table["type"].as_str().unwrap().to_ascii_lowercase();
+    
+    if material_type == "lambertian" {
+        Lambertian::from_table(table)
+    } else if material_type == "metal" {
+        Metal::from_table(table)
+    } else if material_type == "dielectric" {
+        Dielectric::from_table(table)
+    } else {
+        panic!("Unknown material type {}!", material_type)
+    }
+}
 
 pub trait Material : Debug + Sync + Send {
     fn get_hit_result(&self, ray: &Ray, hit_record: &HitRecord) -> HitResult;
+
+    fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized;
 }
 
 #[derive(Debug)]
@@ -30,6 +58,11 @@ impl Material for Lambertian {
         }
 
         HitResult::new_scattered(self.albedo, Ray::new(hit_record.location(), scatter_direction))
+    }
+
+    fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
+        let albedo = Color::from_toml(table["albedo"].as_table().unwrap());
+        Arc::new(Lambertian::new(albedo))
     }
 }
 
@@ -59,6 +92,13 @@ impl Material for Metal {
         let scattered = Ray::new(hit_record.location(), reflected);
 
         HitResult::new_scattered(self.albedo, scattered)
+    }
+
+    fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
+        let albedo = Color::from_toml(table["albedo"].as_table().unwrap());
+        let fuzzy_factor = table["fuzzy_factor"].as_float().unwrap();
+
+        Arc::new(Metal::new(albedo, fuzzy_factor))
     }
 }
 
@@ -100,6 +140,13 @@ impl Material for Dielectric {
             Color::white(), 
             Ray::new(hit_record.location(), refracted_direction),
         )
+    }
+
+    fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
+        let index_of_refraction = table["index_of_refraction"].as_float().unwrap();
+        let hollow = table["hollow"].as_bool().unwrap();
+
+        Arc::new(Dielectric::new(index_of_refraction, hollow))
     }
 }
     
