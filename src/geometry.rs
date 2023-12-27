@@ -147,6 +147,22 @@ impl Vec3 {
         }
     }
 
+    pub fn random_in_unit_disk() -> Vec3 {
+        loop {
+            let x: f64 = thread_rng().gen_range(-1.0..=1.0);
+            let y: f64 = thread_rng().gen_range(-1.0..=1.0);
+
+            if x.powi(2) + y.powi(2) <= 1.0 {
+                return Vec3 {
+                    x,
+                    y,
+                    z: 0.0,
+                };
+            }
+        }
+        
+    }
+
     pub fn random_on_unit_hemisphere(normal: &Vec3) -> Vec3{
         let random_unit_vector = Self::random_unit_vector();
         if random_unit_vector.dot(normal) > 0.0 {

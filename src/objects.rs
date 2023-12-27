@@ -145,6 +145,8 @@ impl Hittable for Sphere {
     }
 
     fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized {
+        println!("===================================");
+        println!("{}", table);
         let center = Point3::from_toml(table["center"].as_table().unwrap());
         let radius = table["radius"].as_float().unwrap();
         let material_name = table["material"].as_str().unwrap();

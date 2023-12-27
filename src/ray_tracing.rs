@@ -9,38 +9,63 @@ use rand::prelude::*;
 pub struct Camera {
     image_width: usize,
     image_height: usize,
-    camera_center: Point3,
+    center: Point3,
     viewport_upper_left_corner: Point3,
     viewport_u: Vec3,
     viewport_v: Vec3,
-    focal_length: f64,
+    defocus_u: Vec3,
+    defocus_v: Vec3,
 }
 
 impl Camera {
-    pub fn new(image_width: usize, image_height: usize, focal_length: f64, view_angle: f64, camera_center: Point3) -> Camera {
+    pub fn new(image_width: usize, image_height: usize, focal_length: f64, view_angle: f64, center: Point3, look_at: Vec3, up: Vec3, defocus_angle: f64) -> Camera {
         let aspect_ratio = (image_width as f64) / (image_height as f64);
         let diagonal_length = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
         let upper_left_diagonal_angle = aspect_ratio.atan();
         let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
         let viewport_width = viewport_height * aspect_ratio;
-        let viewport_u = Vec3::new(viewport_width, 0.0, 0.0);
-        let viewport_v = Vec3::new(0.0 , -viewport_height, 0.0);
-        let viewport_upper_left_corner = camera_center - Vec3::new(0.0, 0.0, focal_length) - viewport_u / 2.0 - viewport_v / 2.0;
+
+        let direction = (look_at - center).unit();
+        let w = -direction;
+        let u = up.cross(&w).unit();
+        let v = w.cross(&u);
+
+        let viewport_u = u * viewport_width;
+        let viewport_v = -v * viewport_height;
+        let viewport_upper_left_corner = center - w * focal_length - viewport_u / 2.0 - viewport_v / 2.0;
+
+        let defocus_radius = focal_length * (defocus_angle / 2.0).to_radians().tan();
+        let defocus_u = defocus_radius * u;
+        let defocus_v = defocus_radius * v;
         println!("Parameters:");
-        println!("\tCamera Center:            {}", camera_center);
+        println!("\tCamera Center:            {}", center);
         println!("\tViewport Height:          {}", viewport_height);
         println!("\tViewport Width:           {}", viewport_width);
         println!("\tViewport Top Left Corner: {}", viewport_upper_left_corner);
 
         Camera {
-            image_width: image_width,
-            image_height: image_height,
-            camera_center: camera_center,
-            viewport_upper_left_corner: viewport_upper_left_corner,
-            viewport_u: viewport_u,
-            viewport_v: viewport_v,
-            focal_length: focal_length,
+            image_width,
+            image_height,
+            center,
+            viewport_upper_left_corner,
+            viewport_u,
+            viewport_v,
+            defocus_u,
+            defocus_v,
         }
+    }
+
+    pub fn from_toml(table: &toml::Table) -> Camera {
+        let image_width: usize = table["image_width"].as_integer().unwrap().try_into().unwrap();
+        let image_height: usize = table["image_height"].as_integer().unwrap().try_into().unwrap();
+        let focal_length: f64 = table["focal_length"].as_float().unwrap();
+        let view_angle: f64 = table["view_angle"].as_float().unwrap();
+        let center = Vec3::from_toml(table["center"].as_table().unwrap());
+        let look_at =  Vec3::from_toml(table["look_at"].as_table().unwrap());
+        let up = Vec3::from_toml(table["up"].as_table().unwrap());
+        let defocus_angle = table["view_angle"].as_float().unwrap();
+
+        Camera::new(image_width, image_height, focal_length, view_angle, center, look_at, up, defocus_angle)
     }
 
     pub fn get_ray(&self, col: usize,  row: usize) -> Ray {
@@ -48,11 +73,13 @@ impl Camera {
         let y_offset = thread_rng().gen_range(0.0..1.0);
         let pixel_offset = self.viewport_u * ((col as f64 + x_offset) / (self.image_width as f64)) + self.viewport_v * ((row as f64 + y_offset) / (self.image_height as f64));
         let pixel_center = self.viewport_upper_left_corner + pixel_offset;
-        let ray_direction = (pixel_center - self.camera_center).unit();
+        let disk_offset = Vec3::random_in_unit_disk();
+        let ray_origin = self.defocus_u * disk_offset.x() + self.defocus_v * disk_offset.y() + self.center;
+        let ray_direction = (pixel_center - ray_origin).unit();
         
         // println!("{:?}", Ray::new(pixel_center, ray_direction));
 
-        Ray::new(self.camera_center, ray_direction)
+        Ray::new(ray_origin, ray_direction)
     }
 
     pub fn image_width(&self) -> usize {
