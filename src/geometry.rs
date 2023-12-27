@@ -17,17 +17,14 @@ impl Vec3 {
         Vec3 {x: 0.0, y: 0.0, z: 0.0}
     }
 
-    #[inline]
     pub fn x(&self) -> f64 {
         self.x
     }
 
-    #[inline]
     pub fn y(&self) -> f64 {
         self.y
     }
 
-    #[inline]
     pub fn z(&self) -> f64 {
         self.z
     }
@@ -35,7 +32,6 @@ impl Vec3 {
 
 impl std::ops::Add for Vec3 {
     type Output = Self;
-    #[inline]
     fn add(self, rhs: Self) -> Self {
         Self {
             x: self.x + rhs.x, 
@@ -47,7 +43,6 @@ impl std::ops::Add for Vec3 {
 
 impl std::ops::Sub for Vec3 {
     type Output = Self;
-    #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
         Self {
             x: self.x - rhs.x, 
@@ -59,7 +54,6 @@ impl std::ops::Sub for Vec3 {
 
 impl std::ops::Mul<f64> for Vec3 {
     type Output = Self;
-    #[inline]
     fn mul(self, rhs: f64) -> Self {
         Self {
             x: self.x * rhs,
@@ -78,7 +72,6 @@ impl std::ops::Mul<Vec3> for f64{
 
 impl std::ops::Div<f64> for Vec3 {
     type Output = Self;
-    #[inline]
     fn div(self, rhs: f64) -> Self::Output {
         Self {
             x: self.x / rhs,
@@ -90,7 +83,6 @@ impl std::ops::Div<f64> for Vec3 {
 
 impl std::ops::Neg for Vec3 {
     type Output = Self;
-    #[inline]
     fn neg(self) -> Self::Output {
         Self {
             x: -self.x,
@@ -107,32 +99,26 @@ impl std::fmt::Display for Vec3 {
 }
 
 impl Vec3 {
-    #[inline]
     pub fn length_squared(&self) -> f64 {
         self.x.powi(2) + self.y.powi(2) + self.z.powi(2)
     }
 
-    #[inline]
     pub fn length(&self) -> f64 {
         self.length_squared().sqrt()
     }
 
-    #[inline]
     pub fn abs(&self) -> f64 {
         self.length()
     }
 
-    #[inline]
     pub fn unit(self) -> Self {
         self / self.length()
     }
 
-    #[inline]
     pub fn dot(&self, rhs: &Self) -> f64 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
-    #[inline]
     pub fn cross(&self, rhs: &Self) -> Self {
         Self {
             x: self.y * rhs.z - self.z * rhs.y,
@@ -141,13 +127,11 @@ impl Vec3 {
         }
     }
 
-    #[inline]
     pub fn near_zero(&self) -> bool {
         let epsilon = 1E-8;
         self.x.abs() < epsilon && self.y.abs() < epsilon && self.z.abs() < epsilon
     }
 
-    #[inline]
     pub fn random_unit_vector() -> Vec3 {
         let normal = rand_distr::Normal::new(0.0, 1.0).unwrap();
         let vector = Vec3 {
@@ -163,7 +147,6 @@ impl Vec3 {
         }
     }
 
-    #[inline]
     pub fn random_on_unit_hemisphere(normal: &Vec3) -> Vec3{
         let random_unit_vector = Self::random_unit_vector();
         if random_unit_vector.dot(normal) > 0.0 {
@@ -173,12 +156,10 @@ impl Vec3 {
         }
     }
 
-    #[inline]
     pub fn reflect(&self, normal: &Vec3) -> Vec3 {
         (*self) - 2.0 * self.dot(normal) * (*normal)
     }
 
-    #[inline]
     pub fn refract(self, normal: &Vec3, refraction_ratio: f64) -> Vec3{
         let cos_theta = (-self).dot(normal).min(1.0);
         let r_out_perpendicular = refraction_ratio * (self + cos_theta * (*normal));

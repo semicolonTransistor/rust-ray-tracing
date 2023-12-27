@@ -207,5 +207,46 @@ impl Scene {
             }
         }).collect()
     }
+
+    pub fn trace_rays2<'a>(&'a self, rays: &mut [Ray], depth_limit: usize, color_output: &mut [Color], ray_enable_flags: &mut [bool], hit_record_buffer: &mut [Option<HitRecord<'a>>]) {
+        color_output.fill(Color::white());
+        ray_enable_flags.fill(true);
+        hit_record_buffer.fill(None);
+
+        for _ in 0..depth_limit {
+            for object in &self.objects {
+                object.hit_rays(rays, &(0.001..f64::INFINITY), ray_enable_flags, hit_record_buffer)
+            }
+
+            for i in 0..rays.len() {
+                match &hit_record_buffer[i] {
+                    Some(hr) => {
+                        let hit_result = hr.hit_result(&rays[i]);
+                        color_output[i] = color_output[i] * hit_result.attenuation();
+                        
+                        match hit_result.scattered_ray() {
+                            Some(r) => {
+                                rays[i] = *r;
+                            },
+                            None => {
+                                ray_enable_flags[i] = false;
+                            },
+                        }
+                        
+                    },
+                    None => {
+                        ray_enable_flags[i] = false;
+                        let direction = rays[i].direction();
+                        let a = 0.5 * (direction.y() + 1.0);
+                        color_output[i] = color_output[i] * Color::new(
+                            (1.0 - a) + a * 0.5, 
+                            (1.0 - a) + a * 0.7, 
+                            (1.0 - a) + a * 1.0
+                        );
+                    },
+                }
+            }
+        }
+    }
 }
  

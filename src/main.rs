@@ -77,7 +77,7 @@ fn main() -> image::ImageResult<()> {
 
     // let world = Arc::new(Scene::from_list(&world_objects));
 
-    let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
+    let renderer = TileRenderer::new(None, NonZeroUsize::new(256).unwrap());
 
     let (render_result, render_stat) = renderer.render(50, 100,  &scene, &camera);
 

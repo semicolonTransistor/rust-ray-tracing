@@ -19,6 +19,12 @@ impl Object {
             Object::Sphere(s) => s.hit(ray, t_range),
         }
     }
+
+    pub fn hit_rays<'a>(&'a self, rays: &[Ray], t_range: &std::ops::Range<f64>, ray_enable_flags: &mut [bool], hit_records: &mut[Option<HitRecord<'a>>]) {
+        match self {
+            Object::Sphere(s) => s.hit_rays(rays, t_range, ray_enable_flags, hit_records),
+        }
+    }
 }
 
 pub fn get_object_list(toml_object_list: &toml::value::Array, material_table: &HashMap<String, Arc<dyn Material>>) -> Vec<Object> {
@@ -92,6 +98,8 @@ impl HitRecord<'_> {
 pub trait Hittable : Debug + Sync + Send {
     fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord>;
 
+    fn hit_rays<'a>(&'a self, rays: &[Ray], t_range: &std::ops::Range<f64>, ray_enable_flags: &mut [bool], hit_records: &mut[Option<HitRecord<'a>>]);
+
     fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized;
 }
 
@@ -107,11 +115,8 @@ impl Sphere {
     pub fn new(center: Point3, radius: f64, material: &Arc<dyn Material>) -> Sphere{
         Sphere { center: center, radius: radius, material: material.clone()}
     }
-    
-}
 
-impl Hittable for Sphere {
-    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
+    fn find_closest_root(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<f64> {
         let center_offset = ray.origin() - self.center;
 
         let a = ray.direction().length_squared();
@@ -131,17 +136,51 @@ impl Hittable for Sphere {
             }
         }
 
+        Some(root)
+    }
+    
+}
 
-        let location = ray.at(root);
+impl Hittable for Sphere {
+    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
+        match self.find_closest_root(ray, t_range) {
+            Some(root) => {
+                let location = ray.at(root);
+                Some(HitRecord::new(
+                    ray,
+                    location,
+                    (location - self.center) / self.radius,
+                    root,
+                    &self.material,
+                ))
+            },
+            None => None
+        }
 
-        Some(HitRecord::new(
-            ray,
-            location,
-            (location - self.center) / self.radius,
-            root,
-            &self.material,
-        ))
+        
 
+    }
+
+    fn hit_rays<'a>(&'a self, rays: &[Ray], t_range: &std::ops::Range<f64>, ray_enable_flags: &mut [bool], hit_records: &mut[Option<HitRecord<'a>>]) {
+        for i in 0..rays.len() {
+            if ray_enable_flags[i] {
+                match self.find_closest_root(&rays[i], t_range) {
+                    Some(root) => {
+                        if hit_records[i].is_none() || hit_records[i].as_ref().unwrap().t() > root {
+                            let location = rays[i].at(root);
+                            hit_records[i] = Some(HitRecord::new(
+                                &rays[i],
+                                location,
+                                (location - self.center) / self.radius,
+                                root,
+                                &self.material,
+                            ))
+                        }
+                    },
+                    None => (),
+                }
+            }
+        }
     }
 
     fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized {

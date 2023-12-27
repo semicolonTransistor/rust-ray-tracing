@@ -55,7 +55,7 @@ impl Color {
         return [ir, ig, ib];
     }
 
-    pub fn average<F>(iter: F) -> Color
+    pub fn average<'a, F>(iter: F) -> Color
     where F: IntoIterator<Item=Color> 
     {
         let mut red = 0.0;

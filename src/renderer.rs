@@ -1,4 +1,6 @@
-use crate::ray_tracing::{Scene, Camera};
+use crate::geometry::{Vec3, Point3};
+use crate::objects::{HitRecord, HitResult};
+use crate::ray_tracing::{Scene, Camera, Ray};
 use crate::color::Color;
 use image::{Rgb, RgbImage, Pixel};
 use std::num::NonZeroUsize;
@@ -83,6 +85,10 @@ impl TileRenderTask {
                     scene.trace_rays(&rays, max_bounces)
                 );
 
+                // let pixel = Color::average(
+                //     (0..samples_per_pixel).map(|_| scene.trace(&camera.get_ray(col, row), max_bounces))
+                // );
+
                 result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
             }
         }
@@ -97,6 +103,50 @@ impl TileRenderTask {
             output: result
         }
     }
+
+    // fn render2(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
+    //     let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
+
+    //     let col_offset = self.block_index_x * self.block_size;
+    //     let row_offset = self.block_index_y * self.block_size;
+
+    //     // reused allocations
+    //     let mut color_buffer = vec![Color::white(); samples_per_pixel];
+    //     let mut ray_buffer = vec![Ray::new(Vec3::zero(), Point3::zero()); samples_per_pixel];
+    //     let mut ray_enable_buffer = vec![true; samples_per_pixel];
+    //     let mut hit_record_buffer: Vec<Option<HitRecord>> = vec![None; samples_per_pixel];
+
+    //     let start = std::time::Instant::now();
+    //     for j in 0..self.size_y {
+    //         for i in 0..self.size_x {
+
+    //             let col = i + col_offset;
+    //             let row = j + row_offset;
+
+    //             for ray in &mut ray_buffer {
+    //                 *ray = camera.get_ray(col, row);
+    //             }
+
+    //             scene.trace_rays2(&mut ray_buffer, max_bounces, &mut color_buffer, &mut ray_enable_buffer, &mut hit_record_buffer);
+
+    //             let pixel = Color::average(
+    //                 &color_buffer
+    //             );
+
+    //             result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
+    //         }
+    //     }
+    //     let duration = std::time::Instant::now().duration_since(start);
+    //     let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
+
+    //     TileRenderResult {
+    //         block_index_x: self.block_index_x,
+    //         block_index_y: self.block_index_y,
+    //         thread_id: thread_id,
+    //         average_pixel_throughput: pixels_per_second,
+    //         output: result
+    //     }
+    // }
 
     
 }
