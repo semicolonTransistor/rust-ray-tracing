@@ -1,7 +1,7 @@
 use crate::{geometry::{Vec3, Point3}, color::Color, objects::Object};
-use crate::objects::{HitRecord, HitResult, Hittable};
+use crate::objects::HitRecord;
 
-use std::{sync::Arc, fmt::Debug};
+use std::fmt::Debug;
 use rand::prelude::*;
 
 #[derive(Debug)]

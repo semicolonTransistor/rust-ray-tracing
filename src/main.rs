@@ -5,13 +5,10 @@ mod materials;
 mod renderer;
 mod objects;
 
-use color::Color;
-use geometry::{Vec3, Point3};
+use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
-use materials::{Lambertian, Material, Metal, Dielectric};
 use std::{sync::Arc, num::NonZeroUsize, path::Path, fs::File, io::Read};
-use renderer::{Renderer, TileRenderer};
-use serde::Deserialize;
+use renderer::TileRenderer;
 
 use crate::{materials::get_materials, objects::get_object_list};
 
@@ -19,12 +16,6 @@ fn read_file_into_string (path: &Path) -> std::io::Result<String> {
     let mut file_content = String::new();
     File::open(path)?.read_to_string(&mut file_content)?;
     Ok(file_content)
-}
-
-#[derive(Deserialize, Debug)]
-struct Header {
-    #[serde(rename = "type")]
-    pub object_type: String
 }
 
 fn main() -> image::ImageResult<()> {

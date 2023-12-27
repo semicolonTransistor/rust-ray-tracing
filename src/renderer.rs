@@ -1,9 +1,8 @@
 use crate::ray_tracing::{Scene, Camera};
 use crate::color::Color;
-use image::{Rgb, RgbImage, Pixel};
+use image::{Rgb, RgbImage};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::Duration;
 use console::Term;
 use std::io::Write;
 
