@@ -1,5 +1,5 @@
-use crate::{geometry::{Vec3, Point3}, color::Color};
-use crate::materials::Material;
+use crate::{geometry::{Vec3, Point3}, color::Color, objects::Object};
+use crate::objects::{HitRecord, HitResult, Hittable};
 
 use std::{sync::Arc, fmt::Debug};
 use rand::prelude::*;
@@ -95,113 +95,13 @@ impl Ray {
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct HitRecord {
-    location: Point3,
-    normal: Vec3,
-    t: f64,
-    front_face: bool,
-    material: Arc<dyn Material>,
-}
-
-impl HitRecord {
-    pub fn new(ray: &Ray, location: Point3, outward_normal: Vec3, t: f64, material: &Arc<dyn Material>) -> HitRecord {
-        debug_assert!((outward_normal.length() - 1.0).abs() < 1E-9, "expecting 1.0, got {}", outward_normal.length());
-        
-        
-        let (front_face, normal) = if ray.direction().dot(&outward_normal) < 0.0 {
-            (true, outward_normal)
-        } else {
-            (false, -outward_normal)
-        };
-        
-
-        HitRecord {
-            location: location,
-            normal: normal,
-            t: t,
-            front_face: front_face,
-            material: material.clone()
-        }
-    }
-
-    pub fn location(&self) -> Point3 {
-        self.location
-    }
-
-    pub fn normal(&self) -> Vec3 {
-        self.normal
-    }
-
-    pub fn t(&self) -> f64 {
-        self.t
-    }
-
-    pub fn front_face(&self) -> bool {
-        self.front_face
-    }
-
-    pub fn hit_result(&self, ray: &Ray) -> HitResult {
-        self.material.get_hit_result(ray, self)
-    }
-}
-
-pub trait Hittable : Debug + Sync + Send {
-    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord>;
-}
-
-#[derive(Clone)]
-#[derive(Debug)]
-pub struct Sphere {
-    center: Point3,
-    radius: f64,
-    material: Arc<dyn Material>,
-}
-
-impl Sphere {
-    pub fn new(center: Point3, radius: f64, material: &Arc<dyn Material>) -> Sphere{
-        Sphere { center: center, radius: radius, material: material.clone()}
-    }
-    
-}
-
-impl Hittable for Sphere {
-    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
-        let center_offset = ray.origin() - self.center;
-
-        let a = ray.direction().length_squared();
-        let half_b = center_offset.dot(&ray.direction());
-        let c = center_offset.length_squared() - self.radius.powi(2);
-        let discriminant = half_b.powi(2) - a * c;
-        if discriminant < 0.0 {
-            return None;
-        }
-
-        let sqrt_discriminant = discriminant.sqrt();
-        let mut root = (-half_b - sqrt_discriminant) / a;
-        if !t_range.contains(&root) {
-            root = (-half_b + sqrt_discriminant) / a;
-            if !t_range.contains(&root) {
-                return None;
-            }
-        }
-
-
-        let location = ray.at(root);
-
-        Some(HitRecord::new(
-            ray,
-            location,
-            (location - self.center) / self.radius,
-            root,
-            &self.material,
-        ))
-
-    }
-}
-#[derive(Debug)]
-#[derive(Clone)]
 pub struct Scene {
-    objects: Vec<Arc<dyn Hittable>>
+    objects: Vec<Object>
+}
+
+struct RayState {
+    color: Color,
+    ray: Option<Ray>
 }
 
 impl Scene {
@@ -209,29 +109,32 @@ impl Scene {
         Scene { objects: Vec::new() }
     }
 
-    pub fn from_list(list: &[Arc<dyn Hittable>]) -> Scene {
+    pub fn from_list(list: &[Object]) -> Scene {
         Scene { objects: list.to_vec()}
     }
 
-    pub fn add(&mut self, object: &Arc<dyn Hittable>) {
-        self.objects.push(object.clone());
+    pub fn add(&mut self, object: Object) {
+        self.objects.push(object);
     }
 
+    
     pub fn hit(&self, ray: &Ray, t_range: std::ops::Range<f64>) -> Option<HitRecord> {
-        let mut hit_record: Option<HitRecord> = None;
-        let mut search_range = t_range;
+        // let mut hit_record: Option<HitRecord> = None;
+        // let mut search_range = t_range;
 
-        for object in &self.objects {
-            hit_record = match object.hit(ray, &search_range) {
-                Some(new_hit_record) => {
-                    search_range = search_range.start..new_hit_record.t;
-                    Some(new_hit_record)
-                },
-                None => hit_record,
-            }
-        }
+        // for object in &self.objects {
+        //     hit_record = match object.hit(ray, &search_range) {
+        //         Some(new_hit_record) => {
+        //             search_range = search_range.start..new_hit_record.t();
+        //             Some(new_hit_record)
+        //         },
+        //         None => hit_record,
+        //     }
+        // }
 
-        hit_record
+        self.objects.iter().map(|obj| {
+            obj.hit(ray, &t_range)
+        }).filter_map(|e| e).min_by_key(|h| {ordered_float::OrderedFloat::from(h.t())})
     }
 
     pub fn trace(&self, ray: &Ray, depth_limit: usize) -> Color {
@@ -245,7 +148,7 @@ impl Scene {
                         Some(scattered_ray) => {
                             self.trace(scattered_ray, depth_limit - 1) * hit_result.attenuation()
                         },
-                        None => hit_result.attenuation,
+                        None => hit_result.attenuation(),
                     }
                 },
                 None => {
@@ -260,30 +163,49 @@ impl Scene {
             }
         }
     }
-}
 
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct HitResult {
-    attenuation: Color,
-    scattered_ray: Option<Ray>
-}
+    pub fn trace_rays(&self, rays: &[Ray], depth_limit: usize) -> Vec<Color> {
+        let mut ray_stats = rays.iter().map(|r| {
+            RayState {
+                color: Color::white(),
+                ray: Some(*r)
+            }
+        }).collect::<Vec<_>>();
 
-impl HitResult {
-    pub fn new_absorbed(attenuation: Color) -> HitResult {
-        HitResult { attenuation: attenuation, scattered_ray: None }
-    }
+        for _ in 0..depth_limit {
+            for ray_state in &mut ray_stats {
+                
+                match ray_state.ray {
+                    Some(ray) => {
+                        match self.hit(&ray, 0.001..f64::INFINITY) {
+                            Some(hit_record) => {
+                                let hit_result = hit_record.hit_result(&ray);
+                                ray_state.color = ray_state.color * hit_result.attenuation();
+                                ray_state.ray = hit_result.scattered_ray().copied();
+                            },
+                            None => {
+                                let direction = ray.direction();
+                                let a = 0.5 * (direction.y() + 1.0);
+                                ray_state.color = ray_state.color * Color::new(
+                                    (1.0 - a) + a * 0.5, 
+                                    (1.0 - a) + a * 0.7, 
+                                    (1.0 - a) + a * 1.0
+                                );
+                                ray_state.ray = None;
+                            },
+                        }
+                    },
+                    None => (),
+                }
+            }
+        }
 
-    pub fn new_scattered(attenuation: Color, scattered_ray: Ray) -> HitResult {
-        HitResult { attenuation: attenuation, scattered_ray: Some(scattered_ray) }
-    }
-
-    pub fn attenuation(&self) -> Color {
-        self.attenuation
-    }
-
-    pub fn scattered_ray(&self) -> Option<&Ray> {
-        self.scattered_ray.as_ref()
+        ray_stats.iter().map(|rs| {
+            match rs.ray {
+                Some(_) => Color::black(),
+                None => rs.color,
+            }
+        }).collect()
     }
 }
  

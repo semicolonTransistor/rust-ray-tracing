@@ -77,8 +77,10 @@ impl TileRenderTask {
                 let col = i + col_offset;
                 let row = j + row_offset;
 
+                let rays: Vec<_> = (0..samples_per_pixel).map(|_| camera.get_ray(col, row)).collect();
+
                 let pixel = Color::average(
-                    (0..samples_per_pixel).map(|_| camera.get_ray(col, row)).map(|ray| scene.trace(&ray, max_bounces))
+                    scene.trace_rays(&rays, max_bounces)
                 );
 
                 result[j * self.block_size + i] = Rgb(pixel.to_u8_array());

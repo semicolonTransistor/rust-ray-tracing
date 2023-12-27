@@ -1,5 +1,3 @@
-use std::{vec, thread::sleep};
-
 use rand::prelude::*;
 
 #[derive(Debug)]
@@ -167,6 +165,14 @@ impl Vec3 {
         let r_out_perpendicular = refraction_ratio * (self + cos_theta * (*normal));
         let r_out_parallel = -((1.0 - r_out_perpendicular.length_squared()).abs().sqrt()) * (*normal);
         r_out_perpendicular + r_out_parallel
+    }
+
+    pub fn from_toml(table: &toml::Table) -> Vec3 {
+        let x = table["x"].as_float().unwrap();
+        let y = table["y"].as_float().unwrap();
+        let z = table["z"].as_float().unwrap();
+
+        Vec3::new(x, y, z)
     }
 
 }
