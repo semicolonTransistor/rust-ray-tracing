@@ -1,3 +1,5 @@
+use crate::toml_utils::to_float;
+
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct Color {
@@ -88,12 +90,30 @@ impl Color {
     //     }
     // }
 
-    pub fn from_toml(table :&toml::Table) -> Color {
-        let red = table["red"].as_float().unwrap_or(0.0);
-        let green = table["green"].as_float().unwrap_or(0.0);
-        let blue = table["blue"].as_float().unwrap_or(0.0);
+    pub fn from_toml(value :&toml::Value) -> Option<Color> {
+        match value.as_table() {
+            Some(table) => {
+                let red = to_float(&table["red"]).unwrap_or(0.0);
+                let green = to_float(&table["green"]).unwrap_or(0.0);
+                let blue = to_float(&table["blue"]).unwrap_or(0.0);
 
-        Color::new(red, green, blue)
+                Some(Color::new(red, green, blue))
+            },
+            None => match value.as_array() {
+                Some(array) => {
+                    assert!(array.len() >= 3);
+                    let red = to_float(&array[0]).unwrap();
+                    let green = to_float(&array[1]).unwrap();
+                    let blue = to_float(&array[2]).unwrap();
+
+                    Some(Color::new(red, green, blue))
+                },
+                None => None,
+            },
+        }
+        
+
+        
     }
 
     

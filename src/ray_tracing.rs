@@ -60,9 +60,9 @@ impl Camera {
         let image_height: usize = table["image_height"].as_integer().unwrap().try_into().unwrap();
         let focal_length: f64 = table["focal_length"].as_float().unwrap();
         let view_angle: f64 = table["view_angle"].as_float().unwrap();
-        let center = Vec3::from_toml(table["center"].as_table().unwrap());
-        let look_at =  Vec3::from_toml(table["look_at"].as_table().unwrap());
-        let up = Vec3::from_toml(table["up"].as_table().unwrap());
+        let center = Vec3::from_toml(&table["center"]).unwrap();
+        let look_at =  Vec3::from_toml(&table["look_at"]).unwrap();
+        let up = Vec3::from_toml(&table["up"]).unwrap();
         let defocus_angle = table["view_angle"].as_float().unwrap();
 
         Camera::new(image_width, image_height, focal_length, view_angle, center, look_at, up, defocus_angle)

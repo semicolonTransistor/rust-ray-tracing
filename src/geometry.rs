@@ -1,4 +1,5 @@
 use rand::prelude::*;
+use crate::toml_utils::to_float;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -183,12 +184,27 @@ impl Vec3 {
         r_out_perpendicular + r_out_parallel
     }
 
-    pub fn from_toml(table: &toml::Table) -> Vec3 {
-        let x = table["x"].as_float().unwrap();
-        let y = table["y"].as_float().unwrap();
-        let z = table["z"].as_float().unwrap();
+    pub fn from_toml(value: &toml::Value) -> Option<Vec3> {
+        match value.as_table() {
+            Some(table) => {
+                let x = to_float(&table["x"]).unwrap();
+                let y = to_float(&table["y"]).unwrap();
+                let z = to_float(&table["z"]).unwrap();
+                Some(Vec3::new(x, y, z))
+            },
+            None => match value.as_array() {
+                Some(array) => {
+                    assert!(array.len() >= 3);
+                    let x = to_float(&array[0]).unwrap();
+                    let y = to_float(&array[1]).unwrap();
+                    let z = to_float(&array[2]).unwrap();
 
-        Vec3::new(x, y, z)
+                    Some(Vec3::new(x, y, z))
+                },
+                None => None,
+            },
+        }
+        
     }
 
 }

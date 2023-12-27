@@ -4,6 +4,7 @@ mod ray_tracing;
 mod materials;
 mod renderer;
 mod objects;
+mod toml_utils;
 
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
@@ -45,8 +46,8 @@ fn main() -> image::ImageResult<()> {
     // let image_width = 400;
     // let image_height = 225;
 
-    let image_width = 3840;
-    let image_height = 2160;
+    let image_width = 1920;
+    let image_height = 1080;
     // let max_pixel_value = 256;
 
     let camera = Arc::new(Camera::new(

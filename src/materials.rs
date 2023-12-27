@@ -4,6 +4,7 @@ use crate::geometry::Vec3;
 use crate::color::Color;
 use crate::ray_tracing::Ray;
 use crate::objects::{HitRecord, HitResult};
+use crate::toml_utils::to_float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -61,7 +62,7 @@ impl Material for Lambertian {
     }
 
     fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
-        let albedo = Color::from_toml(table["albedo"].as_table().unwrap());
+        let albedo = Color::from_toml(&table["albedo"]).unwrap();
         Arc::new(Lambertian::new(albedo))
     }
 }
@@ -95,8 +96,10 @@ impl Material for Metal {
     }
 
     fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
-        let albedo = Color::from_toml(table["albedo"].as_table().unwrap());
-        let fuzzy_factor = table["fuzzy_factor"].as_float().unwrap();
+        println!("=====================");
+        println!("{}", table);
+        let albedo = Color::from_toml(&table["albedo"]).unwrap();
+        let fuzzy_factor = to_float(&table["fuzzy_factor"]).unwrap();
 
         Arc::new(Metal::new(albedo, fuzzy_factor))
     }
@@ -143,7 +146,7 @@ impl Material for Dielectric {
     }
 
     fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
-        let index_of_refraction = table["index_of_refraction"].as_float().unwrap();
+        let index_of_refraction = to_float(&table["index_of_refraction"]).unwrap();
         let hollow = table["hollow"].as_bool().unwrap();
 
         Arc::new(Dielectric::new(index_of_refraction, hollow))
