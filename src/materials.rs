@@ -97,8 +97,8 @@ impl Material for Metal {
     }
 
     fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
-        println!("=====================");
-        println!("{}", table);
+        // println!("=====================");
+        // println!("{}", table);
         let albedo = Color::from_toml(&table["albedo"]).unwrap();
         let fuzzy_factor = to_float(&table["fuzzy_factor"]).unwrap();
 

@@ -3,7 +3,7 @@ use std::vec;
 use rand::prelude::*;
 use rand_distr::{weighted_alias::AliasableWeight, num_traits::Zero};
 use crate::toml_utils::to_float;
-use crate::packed::{PackedF64, PackedBool};
+use crate::packed::{PackedF64, PackedF64Mask};
 use array_macro::array;
 
 #[derive(Debug)]
@@ -228,6 +228,7 @@ pub struct PackedVec3<const N: usize> {
 pub type PackedPoint3<const N:usize> = PackedVec3<N>;
 
 impl <const N: usize> PackedVec3<N> {
+    #[inline]
     pub fn zeros() -> PackedVec3<N> {
         PackedVec3 {
             x: PackedF64::<N>::broadcast_scaler(0.0),
@@ -236,6 +237,7 @@ impl <const N: usize> PackedVec3<N> {
         }
     }
 
+    #[inline]
     pub fn from_vec3s(vec3s: &[Vec3]) -> PackedVec3<N> {
         assert!(vec3s.len() == N);
 
@@ -246,6 +248,7 @@ impl <const N: usize> PackedVec3<N> {
         }
     }
 
+    #[inline]
     pub fn from_broadcast_vec3(vec3: &Vec3) -> PackedVec3<N> {
         PackedVec3 {
             x: PackedF64::<N>::broadcast_scaler(vec3.x()),
@@ -254,16 +257,27 @@ impl <const N: usize> PackedVec3<N> {
         }
     }
 
-    pub fn assign_masked(&mut self, values: &PackedVec3<N>, mask: PackedBool<N>) {
-        self.x.assign_masked(values.x, mask);
-        self.y.assign_masked(values.y, mask);
-        self.z.assign_masked(values.z, mask);
+    #[inline]
+    pub fn assign_masked(&mut self, values: &PackedVec3<N>, mask: PackedF64Mask<N>) {
+        self.x.assign_masked_f64(values.x, mask);
+        self.y.assign_masked_f64(values.y, mask);
+        self.z.assign_masked_f64(values.z, mask);
+    }
+
+    #[inline]
+    pub fn select_masked(&self, values: &PackedVec3<N>, mask: PackedF64Mask<N>) -> PackedVec3<N>{
+        PackedVec3 {
+            x: self.x.select_masked(values.x, mask),
+            y: self.x.select_masked(values.y, mask),
+            z: self.x.select_masked(values.z, mask),
+        }
     }
 }
 
 impl <const N: usize> std::ops::Add for PackedVec3<N> {
     type Output = PackedVec3<N>;
     
+    #[inline]
     fn add(self, rhs: Self) -> Self::Output {
         PackedVec3 {
             x: self.x + rhs.x,
@@ -277,6 +291,7 @@ impl <const N: usize> std::ops::Add for PackedVec3<N> {
 impl <const N: usize> std::ops::Sub for PackedVec3<N> {
     type Output = PackedVec3<N>;
     
+    #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
         PackedVec3 {
             x: self.x - rhs.x,
@@ -289,6 +304,7 @@ impl <const N: usize> std::ops::Sub for PackedVec3<N> {
 impl <const N: usize> std::ops::Sub<Vec3> for PackedVec3<N> {
     type Output = PackedVec3<N>;
     
+    #[inline]
     fn sub(self, rhs: Vec3) -> Self::Output {
         PackedVec3 {
             x: self.x - rhs.x,
@@ -301,6 +317,7 @@ impl <const N: usize> std::ops::Sub<Vec3> for PackedVec3<N> {
 impl <const N: usize> std::ops::Sub<PackedVec3<N>> for Vec3 {
     type Output = PackedVec3<N>;
     
+    #[inline]
     fn sub(self, rhs: PackedVec3<N>) -> Self::Output {
         PackedVec3 {
             x: (-rhs.x) + self.x,
@@ -313,6 +330,7 @@ impl <const N: usize> std::ops::Sub<PackedVec3<N>> for Vec3 {
 impl <const N: usize> std::ops::Neg for PackedVec3<N> {
     type Output = PackedVec3<N>;
 
+    #[inline]
     fn neg(self) -> Self::Output {
         PackedVec3 {
             x: -self.x,
@@ -325,6 +343,7 @@ impl <const N: usize> std::ops::Neg for PackedVec3<N> {
 impl <const N: usize> std::ops::Mul<f64> for PackedVec3<N> {
     type Output = PackedVec3<N>;
 
+    #[inline]
     fn mul(self, rhs: f64) -> Self::Output {
         PackedVec3 {
             x: self.x * rhs,
@@ -336,6 +355,8 @@ impl <const N: usize> std::ops::Mul<f64> for PackedVec3<N> {
 
 impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedVec3<N> {
     type Output = PackedVec3<N>;
+
+    #[inline]
     fn mul(self, rhs: PackedF64<N>) -> Self::Output {
         PackedVec3 {
             x: self.x * rhs,
@@ -347,6 +368,8 @@ impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedVec3<N> {
 
 impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 {
     type Output = PackedVec3<N>;
+
+    #[inline]
     fn mul(self, rhs: PackedVec3<N>) -> Self::Output {
         rhs * self
     }
@@ -354,6 +377,8 @@ impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 {
 
 impl <const N: usize> std::ops::Div<f64> for PackedVec3<N> {
     type Output = PackedVec3<N>;
+
+    #[inline]
     fn div(self, rhs: f64) -> Self::Output {
         PackedVec3 {
             x: self.x / rhs,

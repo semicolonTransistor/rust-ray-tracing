@@ -1,5 +1,5 @@
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
-use crate::packed::{PackedBool, PackedF64};
+use crate::packed::{PackedF64, PackedF64Mask, Mask};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -35,7 +35,7 @@ impl Ray {
 pub struct PackedRays<const N: usize> {
     origins: PackedPoint3<N>,
     directions: PackedVec3<N>,
-    enabled: PackedBool<N>
+    enabled: PackedF64Mask<N>
 }
 
 impl <const N: usize> PackedRays<N> {
@@ -44,12 +44,12 @@ impl <const N: usize> PackedRays<N> {
         PackedRays {
             origins,
             directions,
-            enabled: PackedBool::<N>::broadcast_scaler(true)
+            enabled: PackedF64Mask::<N>::broadcast_bool(true)
         }
     }
 
     #[inline]
-    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: PackedBool<N>) -> PackedRays<N> {
+    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: PackedF64Mask<N>) -> PackedRays<N> {
         PackedRays { origins, directions, enabled }
     }
 
@@ -64,13 +64,13 @@ impl <const N: usize> PackedRays<N> {
     }
 
     #[inline]
-    pub fn enabled(&self) -> PackedBool<N> {
+    pub fn enabled(&self) -> PackedF64Mask<N> {
         self.enabled
     }
 
     #[inline]
     pub fn is_enabled(&self, index: usize) -> bool {
-        self.enabled[index]
+        self.enabled[index].to_bool()
     }
 
     #[inline]
@@ -80,7 +80,7 @@ impl <const N: usize> PackedRays<N> {
 
     #[inline]
     pub fn at(&self, index: usize) -> Option<Ray> {
-        if self.enabled[index] {
+        if self.enabled[index].to_bool() {
             Some(Ray::new(self.origins.at(index), self.directions.at(index)))
         } else {
             None
@@ -101,14 +101,14 @@ impl <const N: usize> PackedRays<N> {
     pub fn update(&mut self, index: usize, value: Ray) {
         self.origins.update(index, value.origin());
         self.directions.update(index, value.direction());
-        self.enabled[index] = true;
+        self.enabled[index] = u64::mask_from_bool(true);
     }
 
     #[inline]
     pub fn update_with_enable(&mut self, index: usize, value: Ray, enable: bool) {
         self.origins.update(index, value.origin());
         self.directions.update(index, value.direction());
-        self.enabled[index] = enable;
+        self.enabled[index] = u64::mask_from_bool(enable);
     }
 
     #[inline]
@@ -118,12 +118,12 @@ impl <const N: usize> PackedRays<N> {
 
     #[inline]
     pub fn enable(&mut self, index: usize) {
-        self.enabled[index] = true;
+        self.enabled[index] = u64::mask_from_bool(true);
     }
 
     #[inline]
     pub fn disable(&mut self, index: usize) {
-        self.enabled[index] = false;
+        self.enabled[index] = u64::mask_from_bool(false);
     }
 }
 
@@ -132,7 +132,7 @@ impl <const N: usize> FromIterator<Ray> for PackedRays<N> {
         let mut packed_rays = PackedRays {
             directions: PackedVec3::default(),
             origins: PackedPoint3::default(),
-            enabled: PackedBool::broadcast_scaler(false)
+            enabled: PackedF64Mask::broadcast_bool(false)
         };
 
         for (index, value) in iter.into_iter().enumerate() {

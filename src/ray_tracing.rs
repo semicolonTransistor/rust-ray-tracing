@@ -1,8 +1,8 @@
 use crate::color::PackedColor;
+use crate::packed::{PackedF64Mask, Scaler, Mask};
 use crate::{color::Color, objects::Object};
 use crate::objects::{HitRecord, PackedHitRecords, HitResult};
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
-use crate::packed::PackedBool;
 use crate::ray::{Ray, PackedRays};
 
 use std::fmt::Debug;
@@ -310,7 +310,7 @@ impl Scene {
     {
         let mut color = PackedColor::<N>::broadcast_scaler(Color::black());
         color.assign_masked(PackedColor::broadcast_scaler(Color::white()), rays.enabled());
-        let mut hit_sky = PackedBool::<N>::broadcast_scaler(false);
+        let mut hit_sky = PackedF64Mask::<N>::broadcast_bool(false);
 
         for _ in 0..depth_limit {
             if !rays.any_enabled() {
@@ -324,6 +324,7 @@ impl Scene {
                 object.hit_packed(&rays, &(0.001..f64::INFINITY), &mut hit_records)
             }
 
+            hit_records.finalize(&rays);
 
             // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
 
@@ -343,7 +344,7 @@ impl Scene {
                     },
                     None => {
                         rays.disable(i);
-                        hit_sky[i] = true;
+                        hit_sky[i] = <f64 as Scaler>::MaskType::mask_from_bool(true);
                     },
                 }
             }
@@ -369,7 +370,7 @@ impl Scene {
     ) -> Color {
         let mut ray_buffers: [Vec<PackedRays<N>>; 2] = [rays.to_vec(), vec![PackedRays::<N>::new(PackedVec3::default(), PackedVec3::default()); rays.len()]];
         let mut color:[Vec<PackedColor<N>>; 2] = array![vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()]; 2];
-        let mut hit_sky: [Vec<PackedBool<N>>; 2] = array![vec![PackedBool::<N>::broadcast_scaler(false); rays.len()]; 2];
+        let mut hit_sky: [Vec<PackedF64Mask<N>>; 2] = array![vec![PackedF64Mask::<N>::broadcast_bool(false); rays.len()]; 2];
 
         let mut last_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -388,7 +389,7 @@ impl Scene {
                     object.hit_packed(&ray_buffers[selector][j], &(0.001..f64::INFINITY), &mut hit_records)
                 }
 
-
+                hit_records.finalize(&ray_buffers[selector][j]);
                 // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
 
                 for i in 0..N {
@@ -408,7 +409,7 @@ impl Scene {
                         },
                         None => {
                             ray_buffers[selector][j].disable(i);
-                            hit_sky[selector][j][i] = true;
+                            hit_sky[selector][j][i] = u64::mask_from_bool(true);
                         },
                     }
                 }
@@ -498,7 +499,7 @@ impl Scene {
         depth_limit: usize,
     ) -> Color {
         let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
-        let mut hit_sky = vec![PackedBool::<N>::broadcast_scaler(false); rays.len()];
+        let mut hit_sky = vec![PackedF64Mask::<N>::broadcast_bool(false); rays.len()];
 
         let mut last_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -514,6 +515,8 @@ impl Scene {
                 for object in &self.objects {
                     object.hit_packed(&rays[j], &(0.001..f64::INFINITY), &mut hit_records)
                 }
+
+                hit_records.finalize(&rays[j]);
 
 
                 // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
@@ -535,7 +538,7 @@ impl Scene {
                         },
                         None => {
                             rays[j].disable(i);
-                            hit_sky[j][i] = true;
+                            hit_sky[j][i] = u64::mask_from_bool(true);
                         },
                     }
                 }

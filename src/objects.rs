@@ -6,7 +6,7 @@ use crate::ray::{Ray, PackedRays};
 use crate::color::Color;
 use crate::toml_utils::to_float;
 use crate::geometry::{PackedVec3, PackedPoint3};
-use crate::packed::{PackedScalerPartialOrd, PackedPartialOrd, PackedF64, PackedBool};
+use crate::packed::{PackedScalerPartialOrd, PackedPartialOrd, PackedF64, PackedF64Mask, Mask};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -105,10 +105,11 @@ impl HitRecord<'_> {
 #[derive(Clone)]
 pub struct PackedHitRecords<'a, const N: usize> {
     locations: PackedPoint3<N>,
+    outward_normals: PackedVec3<N>,
     normals: PackedVec3<N>,
     t: PackedF64<N>,
-    front_face: PackedBool<N>,
-    hits: PackedBool<N>,
+    front_face: PackedF64Mask<N>,
+    hits: PackedF64Mask<N>,
     materials: [Option<&'a Arc<dyn Material>>; N]
 }
 
@@ -116,46 +117,55 @@ impl <const N: usize> Default for PackedHitRecords<'_, N> {
     fn default() -> Self {
         PackedHitRecords {
             locations: PackedPoint3::default(),
+            outward_normals: PackedVec3::default(),
             normals: PackedVec3::default(),
             t: PackedF64::broadcast_scaler(f64::INFINITY),
-            front_face: PackedBool::default(),
-            hits: PackedBool::default(),
+            front_face: PackedF64Mask::default(),
+            hits: PackedF64Mask::default(),
             materials: array![None; N]
         }
     }
 }
 
 impl <'a, const N: usize> PackedHitRecords<'a, N> {
-    pub fn update(&mut self, rays: &PackedRays<N>, locations: &PackedPoint3<N>, outward_normals: &PackedVec3<N>, t: &PackedF64<N>, valid_mask: &PackedBool<N>, material: &'a Arc<dyn Material>) {
-        let mut normals = *outward_normals;
+    pub fn update(&mut self, rays: &PackedRays<N>, outward_normals: &PackedVec3<N>, t: &PackedF64<N>, valid_mask: &PackedF64Mask<N>, material: &'a Arc<dyn Material>) {
+        // let mut normals = *outward_normals;
 
-        let front_face = PackedScalerPartialOrd::lt(&rays.directions().dot(&outward_normals), &0.0);
+        // let front_face = PackedScalerPartialOrd::lt(&rays.directions().dot(&outward_normals), &0.0);
 
-        normals.assign_masked(&-*outward_normals, !front_face);
+        // normals.assign_masked(&-*outward_normals, !front_face);
 
         let update_mask = *valid_mask & PackedPartialOrd::le(t, &self.t);
 
-        self.locations.assign_masked(&locations, update_mask);
-        self.normals.assign_masked(&normals, update_mask);
+        // self.locations.assign_masked(&locations, update_mask);
+        self.outward_normals.assign_masked(outward_normals, update_mask);
         self.t.assign_masked(*t, update_mask);
-        self.front_face.assign_masked(front_face, update_mask);
+       //  self.front_face = self.front_face | (update_mask & front_face);
+        // self.front_face = self.front_face & (!update_mask | front_face);
         self.hits = self.hits | update_mask;
         
         for i in 0..N {
-            if update_mask[i] {
+            if update_mask[i].to_bool() {
                 self.materials[i] = Some(material);
             }
         }
 
     }
 
+    pub fn finalize(&mut self, rays: &PackedRays<N>) {
+        self.locations = rays.at_t(self.t);
+        self.normals = self.outward_normals;
+        self.front_face = PackedScalerPartialOrd::lt(&rays.directions().dot(&self.outward_normals), &0.0);
+        self.normals.assign_masked(&-self.outward_normals, !self.front_face);
+    }
+
     pub fn at(&self, index: usize) -> Option<HitRecord<'a>> {
-        if self.hits[index] {
+        if self.hits[index].to_bool() {
             Some(HitRecord {
                 location: self.locations.at(index),
                 normal: self.normals.at(index),
                 t: self.t[index],
-                front_face: self.front_face[index],
+                front_face: self.front_face[index].to_bool(),
                 material: self.materials[index].unwrap(),
             })
         } else {
@@ -175,11 +185,11 @@ impl <'a, const N: usize> PackedHitRecords<'a, N> {
         self.t
     }
 
-    pub fn hits(&self) -> PackedBool<N> {
+    pub fn hits(&self) -> PackedF64Mask<N> {
         self.hits
     }
 
-    pub fn front_face(&self) -> PackedBool<N> {
+    pub fn front_face(&self) -> PackedF64Mask<N> {
         self.front_face
     }
 
@@ -267,10 +277,9 @@ impl Sphere {
         
         hit_records.update(
             rays, 
-            &locations, 
             &normal,
             &root, 
-            &root_valid, 
+            &valid, 
             &self.material
         )
     }

@@ -1,5 +1,5 @@
 use crate::toml_utils::to_float;
-use crate::packed::{PackedF64, PackedBool, PackedScalerPartialEq, PackedScalerPartialOrd};
+use crate::packed::{PackedF64, PackedScalerPartialEq, PackedScalerPartialOrd, PackedF64Mask};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -188,7 +188,7 @@ impl <const N: usize> PackedColor<N> {
     }
 
     #[inline]
-    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: PackedBool<N>) {
+    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: PackedF64Mask<N>) {
         self.red.assign_masked(colors.red, mask);
         self.green.assign_masked(colors.green, mask);
         self.blue.assign_masked(colors.blue, mask);

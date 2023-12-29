@@ -176,7 +176,7 @@ impl TileRenderTask {
     }
 
     fn render_vectorized3(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 4;
+        const N:usize = 16;
         let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
 
         let col_offset = self.block_index_x * self.block_size;
@@ -286,7 +286,7 @@ impl Renderer for TileRenderer {
                         block_index_y: task.block_index_y,
                     })).unwrap();
 
-                    let result = task.render(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id);
+                    let result = task.render_vectorized3(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id);
 
                     thread_update_tx.send(TileRenderUpdates::End(result)).unwrap();
 
