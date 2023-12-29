@@ -5,6 +5,7 @@ mod materials;
 mod renderer;
 mod objects;
 mod toml_utils;
+mod packed;
 
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
@@ -41,13 +42,13 @@ fn main() -> image::ImageResult<()> {
 
     let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["objects"].as_array().unwrap(), &materials)));
 
-    println!("Materials {:?}", materials);
-    println!("Scene {:?}", scene);
+    // println!("Materials {:?}", materials);
+    // println!("Scene {:?}", scene);
     // let image_width = 400;
     // let image_height = 225;
 
-    let image_width = 1920;
-    let image_height = 1080;
+    let image_width = 1280;
+    let image_height = 720;
     // let max_pixel_value = 256;
 
     let camera = Arc::new(Camera::new(
@@ -61,7 +62,7 @@ fn main() -> image::ImageResult<()> {
 
     let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
 
-    let (render_result, render_stat) = renderer.render(50, 100,  &scene, &camera);
+    let (render_result, render_stat) = renderer.render(50, 128,  &scene, &camera);
 
     render_result.save("output.png")?;
 

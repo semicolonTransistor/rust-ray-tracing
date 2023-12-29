@@ -52,6 +52,7 @@ impl Lambertian {
 
 impl Material for Lambertian {
     fn get_hit_result(&self, _ray: &Ray, hit_record: &HitRecord) -> HitResult {
+
         let mut scatter_direction = Vec3::random_unit_vector() + hit_record.normal();
 
         if scatter_direction.near_zero() {

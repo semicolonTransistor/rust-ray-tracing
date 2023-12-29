@@ -1,4 +1,5 @@
 use crate::toml_utils::to_float;
+use crate::packed::{PackedF64, PackedBool, PackedScalerPartialEq, PackedScalerPartialOrd};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -49,6 +50,9 @@ impl Color {
     // }
 
     pub fn to_u8_array(&self) -> [u8; 3]{
+        assert!(self.red <= 2.0, "red should be less than 1.0, but got {}", self.red);
+        assert!(self.green <= 2.0, "green should be less than 1.0, but got {}", self.green);
+        assert!(self.blue <= 2.0, "blue should be less than 1.0, but got {}", self.blue);
         let scale_factor = 255.999;
         let ir = (self.red.sqrt() * scale_factor) as u8;
         let ig = (self.green.sqrt() * scale_factor) as u8;
@@ -121,6 +125,8 @@ impl Color {
 
 impl std::ops::Mul<Color> for Color {
     type Output = Color;
+
+    #[inline]
     fn mul(self, rhs: Color) -> Self::Output {
         Color{
             red: self.red * rhs.red,
@@ -130,9 +136,140 @@ impl std::ops::Mul<Color> for Color {
     }
 }
 
+impl std::ops::Mul<f64> for Color {
+    type Output = Color;
+
+    #[inline]
+    fn mul(self, rhs: f64) -> Self::Output {
+        Color{
+            red: self.red * rhs,
+            green: self.green * rhs,
+            blue: self.blue * rhs,
+        }
+    }
+}
+
+impl std::ops::Div<f64> for Color {
+    type Output = Color;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self::Output {
+        Color{
+            red: self.red / rhs,
+            green: self.green / rhs,
+            blue: self.blue / rhs,
+        }
+    }
+}
+
 
 impl std::fmt::Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({:.2}, {:.2}, {:.2})", self.red, self.green, self.blue)
+    }
+}
+
+#[derive(Debug)]
+#[derive(Copy, Clone)]
+pub struct PackedColor<const N: usize> {
+    red: PackedF64<N>,
+    green: PackedF64<N>,
+    blue: PackedF64<N>
+}
+
+impl <const N: usize> PackedColor<N> {
+    #[inline]
+    pub fn broadcast_scaler(color: Color) -> PackedColor<N> {
+        PackedColor {
+            red: PackedF64::broadcast_scaler(color.red),
+            green: PackedF64::broadcast_scaler(color.green),
+            blue: PackedF64::broadcast_scaler(color.blue),
+        }
+    }
+
+    #[inline]
+    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: PackedBool<N>) {
+        self.red.assign_masked(colors.red, mask);
+        self.green.assign_masked(colors.green, mask);
+        self.blue.assign_masked(colors.blue, mask);
+    }
+
+    #[inline]
+    pub fn at(&self, index: usize) -> Color {
+        Color {
+            red: self.red[index],
+            green: self.green[index],
+            blue: self.blue[index]
+        }
+    }
+
+    #[inline]
+    pub fn update(&mut self, value: Color, index: usize) {
+        self.red[index] = value.red;
+        self.green[index] = value.green;
+        self.blue[index] = value.blue;
+    }
+
+    #[inline]
+    pub fn sum(&self) -> Color {
+        Color {
+            red: self.red.sum(),
+            green: self.green.sum(),
+            blue: self.blue.sum()
+        }
+    }
+
+    pub fn check(&self) {
+        assert!(PackedScalerPartialOrd::le(&self.red, &1.01).all(), "RED Expect <= 1.0, got{:?}", self.red);
+        assert!(PackedScalerPartialOrd::le(&self.green, &1.01).all(), "GREEN Expect <= 1.0, got{:?}", self.green);
+        assert!(PackedScalerPartialOrd::le(&self.blue, &1.01).all(), "BLUE Expect <= 1.0, got{:?}", self.blue);
+    }
+}
+
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedColor<N> {
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self.red * rhs.red,
+            green: self.green * rhs.green,
+            blue: self.blue * rhs.blue,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedColor<N> {
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: PackedF64<N>) -> Self::Output {
+        PackedColor{
+            red: self.red * rhs,
+            green: self.green * rhs,
+            blue: self.blue * rhs,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedF64<N> {
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self * rhs.red,
+            green: self * rhs.green,
+            blue: self * rhs.blue,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Add<PackedColor<N>> for PackedColor<N> {
+    type Output = PackedColor<N>;
+    #[inline]
+    fn add(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self.red + rhs.red,
+            green: self.green + rhs.green,
+            blue: self.blue + rhs.blue,
+        }
     }
 }
