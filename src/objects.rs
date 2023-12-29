@@ -2,15 +2,13 @@ use array_macro::array;
 
 use crate::geometry::{Vec3, Point3};
 use crate::materials::Material;
-use crate::ray_tracing::{Ray, PackedRays};
+use crate::ray::{Ray, PackedRays};
 use crate::color::Color;
 use crate::toml_utils::to_float;
 use crate::geometry::{PackedVec3, PackedPoint3};
-use crate::packed::{PackedScalerPartialOrd, PackedPartialOrd, self, PackedF64, PackedBool, Packed};
+use crate::packed::{PackedScalerPartialOrd, PackedPartialOrd, PackedF64, PackedBool};
 
 use std::collections::HashMap;
-use std::mem::Discriminant;
-use std::panic::Location;
 use std::sync::Arc;
 use std::fmt::Debug;
 

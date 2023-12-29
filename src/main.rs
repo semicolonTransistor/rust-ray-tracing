@@ -6,6 +6,7 @@ mod renderer;
 mod objects;
 mod toml_utils;
 mod packed;
+mod ray;
 
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
@@ -34,18 +35,9 @@ fn main() -> image::ImageResult<()> {
         Err(why) => panic!("Failed parsing scene from file {}: {}", path.display(), why),
     };
 
-    println!(
-        "{}", scene_data
-    );
-
     let materials = get_materials(scene_data["materials"].as_table().unwrap());
 
     let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["objects"].as_array().unwrap(), &materials)));
-
-    // println!("Materials {:?}", materials);
-    // println!("Scene {:?}", scene);
-    // let image_width = 400;
-    // let image_height = 225;
 
     let image_width = 1280;
     let image_height = 720;

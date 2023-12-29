@@ -2,7 +2,7 @@ use rand::{thread_rng, Rng};
 
 use crate::geometry::Vec3;
 use crate::color::Color;
-use crate::ray_tracing::Ray;
+use crate::ray::Ray;
 use crate::objects::{HitRecord, HitResult};
 use crate::toml_utils::to_float;
 use std::collections::HashMap;
