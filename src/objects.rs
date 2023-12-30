@@ -6,9 +6,11 @@ use crate::ray::{Ray, PackedRays};
 use crate::color::Color;
 use crate::toml_utils::to_float;
 use crate::geometry::{PackedVec3, PackedPoint3};
-use crate::packed::{PackedScalerPartialOrd, PackedPartialOrd, PackedF64, PackedF64Mask, Mask};
+use crate::simd_util::{masked_assign, simd_inside};
 
 use std::collections::HashMap;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement, StdFloat};
 use std::sync::Arc;
 use std::fmt::Debug;
 
@@ -25,7 +27,9 @@ impl Object {
         }
     }
 
-    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) {
+    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) 
+    where LaneCount<N>: SupportedLaneCount
+    {
         match self {
             Object::Sphere(s) => s.hit_packed(rays, t_range, hit_records),
         }
@@ -103,49 +107,47 @@ impl HitRecord<'_> {
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct PackedHitRecords<'a, const N: usize> {
+pub struct PackedHitRecords<'a, const N: usize> 
+where LaneCount<N>: SupportedLaneCount
+{
     locations: PackedPoint3<N>,
     outward_normals: PackedVec3<N>,
     normals: PackedVec3<N>,
-    t: PackedF64<N>,
-    front_face: PackedF64Mask<N>,
-    hits: PackedF64Mask<N>,
+    t: Simd<f64, N>,
+    front_face: Mask<<f64 as SimdElement>::Mask, N>,
+    hits:  Mask<<f64 as SimdElement>::Mask, N>,
     materials: [Option<&'a Arc<dyn Material>>; N]
 }
 
-impl <const N: usize> Default for PackedHitRecords<'_, N> {
+impl <const N: usize> Default for PackedHitRecords<'_, N> 
+where LaneCount<N>: SupportedLaneCount
+{
     fn default() -> Self {
         PackedHitRecords {
             locations: PackedPoint3::default(),
             outward_normals: PackedVec3::default(),
             normals: PackedVec3::default(),
-            t: PackedF64::broadcast_scaler(f64::INFINITY),
-            front_face: PackedF64Mask::default(),
-            hits: PackedF64Mask::default(),
+            t: Simd::splat(f64::INFINITY),
+            front_face: Mask::splat(false),
+            hits: Mask::splat(false),
             materials: array![None; N]
         }
     }
 }
 
-impl <'a, const N: usize> PackedHitRecords<'a, N> {
-    pub fn update(&mut self, rays: &PackedRays<N>, outward_normals: &PackedVec3<N>, t: &PackedF64<N>, valid_mask: &PackedF64Mask<N>, material: &'a Arc<dyn Material>) {
-        // let mut normals = *outward_normals;
+impl <'a, const N: usize> PackedHitRecords<'a, N> 
+where 
+    LaneCount<N>: SupportedLaneCount
+{
+    pub fn update(&mut self, rays: &PackedRays<N>, outward_normals: &PackedVec3<N>, t: &Simd<f64, N>, valid_mask: &Mask<<f64 as SimdElement>::Mask, N>, material: &'a Arc<dyn Material>) {
+        let update_mask = *valid_mask & (t.simd_le(self.t));
 
-        // let front_face = PackedScalerPartialOrd::lt(&rays.directions().dot(&outward_normals), &0.0);
-
-        // normals.assign_masked(&-*outward_normals, !front_face);
-
-        let update_mask = *valid_mask & PackedPartialOrd::le(t, &self.t);
-
-        // self.locations.assign_masked(&locations, update_mask);
         self.outward_normals.assign_masked(outward_normals, update_mask);
-        self.t.assign_masked(*t, update_mask);
-       //  self.front_face = self.front_face | (update_mask & front_face);
-        // self.front_face = self.front_face & (!update_mask | front_face);
+        masked_assign(&mut self.t, *t, update_mask);
         self.hits = self.hits | update_mask;
         
         for i in 0..N {
-            if update_mask[i].to_bool() {
+            if update_mask.test(i) {
                 self.materials[i] = Some(material);
             }
         }
@@ -155,17 +157,17 @@ impl <'a, const N: usize> PackedHitRecords<'a, N> {
     pub fn finalize(&mut self, rays: &PackedRays<N>) {
         self.locations = rays.at_t(self.t);
         self.normals = self.outward_normals;
-        self.front_face = PackedScalerPartialOrd::lt(&rays.directions().dot(&self.outward_normals), &0.0);
+        self.front_face = rays.directions().dot(&self.outward_normals).simd_lt(Simd::splat(0.0));
         self.normals.assign_masked(&-self.outward_normals, !self.front_face);
     }
 
     pub fn at(&self, index: usize) -> Option<HitRecord<'a>> {
-        if self.hits[index].to_bool() {
+        if self.hits.test(index) {
             Some(HitRecord {
                 location: self.locations.at(index),
                 normal: self.normals.at(index),
                 t: self.t[index],
-                front_face: self.front_face[index].to_bool(),
+                front_face: self.front_face.test(index),
                 material: self.materials[index].unwrap(),
             })
         } else {
@@ -181,15 +183,15 @@ impl <'a, const N: usize> PackedHitRecords<'a, N> {
         self.normals
     }
 
-    pub fn t(&self) -> PackedF64<N> {
+    pub fn t(&self) -> Simd<f64, N> {
         self.t
     }
 
-    pub fn hits(&self) -> PackedF64Mask<N> {
+    pub fn hits(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
         self.hits
     }
 
-    pub fn front_face(&self) -> PackedF64Mask<N> {
+    pub fn front_face(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
         self.front_face
     }
 
@@ -244,36 +246,25 @@ impl Sphere {
 
     }
 
-    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) {
+    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) 
+    where LaneCount<N>: SupportedLaneCount
+    {
         let center_offset = rays.origins() - self.center;
         let a = rays.directions().length_squared();
         let half_b = center_offset.dot(&rays.directions());
-        let c = center_offset.length_squared() - self.radius.powi(2);
-        let discriminant = half_b.powi(2) - a * c;
+        let c = center_offset.length_squared() - Simd::splat(self.radius.powi(2));
+        let discriminant = half_b * half_b - a * c;
 
-        let discriminant_positive = PackedScalerPartialOrd::ge(&discriminant, &0.0);
+        let discriminant_positive = discriminant.simd_ge(Simd::splat(0.0));
         let sqrt_discriminant = discriminant.sqrt();
         let mut root = (-half_b - sqrt_discriminant) / a;
-        let root_out_of_range = (!root.inside(t_range)) & discriminant_positive;
-        root.assign_masked((-half_b + sqrt_discriminant) / a, root_out_of_range);
-        let root_valid = root.inside(t_range) & discriminant_positive;
+        let root_out_of_range = (!simd_inside(&root, t_range)) & discriminant_positive;
+        masked_assign(&mut root, (-half_b + sqrt_discriminant) / a, root_out_of_range);
+        let root_valid = simd_inside(&root, t_range) & discriminant_positive;
         let valid = root_valid & rays.enabled();
 
         let locations = rays.at_t(root);
         let normal = (locations - self.center) / self.radius;
-
-        // let normal_not_unit = PackedScalerPartialOrd::gt(&(normal.length() - 1.0).abs(), &0.01) & valid;
-        // if normal_not_unit.any() {
-        //     println!("Normal not Unit: {:?}", normal_not_unit);
-        //     println!("Valid: {:?}", valid);
-        //     println!("Discriminate_positive: {:?}", discriminant_positive);
-        //     println!("Sphere: {:?}", self);
-        //     // println!("Rays: {:?}", rays);
-        //     println!("Roots: {:?}", root);
-        //     println!("Normals: {:?}", normal);
-        //     println!("Normal Lengths: {:?}", normal.length());
-        //     panic!()
-        // }
         
         hit_records.update(
             rays, 

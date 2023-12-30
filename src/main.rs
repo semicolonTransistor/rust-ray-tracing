@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 mod geometry;
 mod color;
 mod ray_tracing;
@@ -5,8 +7,9 @@ mod materials;
 mod renderer;
 mod objects;
 mod toml_utils;
-mod packed;
+// mod packed;
 mod ray;
+mod simd_util;
 
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
@@ -39,6 +42,8 @@ fn main() -> image::ImageResult<()> {
 
     let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["objects"].as_array().unwrap(), &materials)));
 
+    // let image_width = 3840;
+    // let image_height = 2160;
     let image_width = 1280;
     let image_height = 720;
     // let max_pixel_value = 256;
@@ -54,7 +59,7 @@ fn main() -> image::ImageResult<()> {
 
     let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
 
-    let (render_result, render_stat) = renderer.render(50, 128,  &scene, &camera);
+    let (render_result, render_stat) = renderer.render(50, 100,  &scene, &camera);
 
     render_result.save("output.png")?;
 

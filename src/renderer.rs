@@ -176,7 +176,7 @@ impl TileRenderTask {
     }
 
     fn render_vectorized3(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 16;
+        const N:usize = 4;
         let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
 
         let col_offset = self.block_index_x * self.block_size;

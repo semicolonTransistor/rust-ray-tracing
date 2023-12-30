@@ -1,10 +1,8 @@
-use std::vec;
-
 use rand::prelude::*;
-use rand_distr::{weighted_alias::AliasableWeight, num_traits::Zero};
 use crate::toml_utils::to_float;
-use crate::packed::{PackedF64, PackedF64Mask};
 use array_macro::array;
+use std::simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement};
+use crate::simd_util::masked_assign;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -219,21 +217,29 @@ pub type Point3 = Vec3;
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 #[derive(Default)]
-pub struct PackedVec3<const N: usize> {
-    x: PackedF64<N>,
-    y: PackedF64<N>,
-    z: PackedF64<N>
+pub struct PackedVec3<const N: usize>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    x: Simd<f64, N>,
+    y: Simd<f64, N>,
+    z: Simd<f64, N>
 }
 
 pub type PackedPoint3<const N:usize> = PackedVec3<N>;
 
-impl <const N: usize> PackedVec3<N> {
+impl <M, const N: usize> PackedVec3<N> 
+where
+    f64: SimdElement<Mask = M>,
+    M: MaskElement,
+    LaneCount<N>: SupportedLaneCount,
+{
     #[inline]
     pub fn zeros() -> PackedVec3<N> {
         PackedVec3 {
-            x: PackedF64::<N>::broadcast_scaler(0.0),
-            y: PackedF64::<N>::broadcast_scaler(0.0),
-            z: PackedF64::<N>::broadcast_scaler(0.0),
+            x: Simd::splat(0.0),
+            y: Simd::splat(0.0),
+            z: Simd::splat(0.0),
         }
     }
 
@@ -242,39 +248,37 @@ impl <const N: usize> PackedVec3<N> {
         assert!(vec3s.len() == N);
 
         PackedVec3 {
-            x: PackedF64::from(array![i => vec3s[i].x(); N]),
-            y: PackedF64::from(array![i => vec3s[i].y(); N]),
-            z: PackedF64::from(array![i => vec3s[i].z(); N]),
+            x: Simd::from_array(array![i => vec3s[i].x(); N]),
+            y: Simd::from_array(array![i => vec3s[i].y(); N]),
+            z: Simd::from_array(array![i => vec3s[i].z(); N]),
         }
     }
 
     #[inline]
     pub fn from_broadcast_vec3(vec3: &Vec3) -> PackedVec3<N> {
+        Self::splat(vec3)
+    }
+
+    #[inline]
+    pub fn splat(vec3: &Vec3) -> PackedVec3<N> {
         PackedVec3 {
-            x: PackedF64::<N>::broadcast_scaler(vec3.x()),
-            y: PackedF64::<N>::broadcast_scaler(vec3.y()),
-            z: PackedF64::<N>::broadcast_scaler(vec3.z()),
+            x: Simd::splat(vec3.x()),
+            y: Simd::splat(vec3.y()),
+            z: Simd::splat(vec3.z()),
         }
     }
 
     #[inline]
-    pub fn assign_masked(&mut self, values: &PackedVec3<N>, mask: PackedF64Mask<N>) {
-        self.x.assign_masked_f64(values.x, mask);
-        self.y.assign_masked_f64(values.y, mask);
-        self.z.assign_masked_f64(values.z, mask);
-    }
-
-    #[inline]
-    pub fn select_masked(&self, values: &PackedVec3<N>, mask: PackedF64Mask<N>) -> PackedVec3<N>{
-        PackedVec3 {
-            x: self.x.select_masked(values.x, mask),
-            y: self.x.select_masked(values.y, mask),
-            z: self.x.select_masked(values.z, mask),
-        }
+    pub fn assign_masked(&mut self, values: &PackedVec3<N>, mask: Mask<M, N>) {
+        masked_assign(&mut self.x, values.x, mask);
+        masked_assign(&mut self.y, values.y, mask);
+        masked_assign(&mut self.z, values.z, mask);
     }
 }
 
-impl <const N: usize> std::ops::Add for PackedVec3<N> {
+impl <const N: usize> std::ops::Add for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
     
     #[inline]
@@ -288,7 +292,9 @@ impl <const N: usize> std::ops::Add for PackedVec3<N> {
 }
 
 
-impl <const N: usize> std::ops::Sub for PackedVec3<N> {
+impl <const N: usize> std::ops::Sub for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
     
     #[inline]
@@ -301,33 +307,31 @@ impl <const N: usize> std::ops::Sub for PackedVec3<N> {
     }
 }
 
-impl <const N: usize> std::ops::Sub<Vec3> for PackedVec3<N> {
+impl <const N: usize> std::ops::Sub<Vec3> for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
     
     #[inline]
     fn sub(self, rhs: Vec3) -> Self::Output {
-        PackedVec3 {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
-        }
+        self - Self::splat(&rhs)
     }
 }
 
-impl <const N: usize> std::ops::Sub<PackedVec3<N>> for Vec3 {
+impl <const N: usize> std::ops::Sub<PackedVec3<N>> for Vec3 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
     
     #[inline]
     fn sub(self, rhs: PackedVec3<N>) -> Self::Output {
-        PackedVec3 {
-            x: (-rhs.x) + self.x,
-            y: (-rhs.y) + self.y,
-            z: (-rhs.z) + self.z,
-        }
+        PackedVec3::splat(&self) - rhs
     }
 }
 
-impl <const N: usize> std::ops::Neg for PackedVec3<N> {
+impl <const N: usize> std::ops::Neg for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
 
     #[inline]
@@ -340,24 +344,29 @@ impl <const N: usize> std::ops::Neg for PackedVec3<N> {
     }
 }
 
-impl <const N: usize> std::ops::Mul<f64> for PackedVec3<N> {
+impl <const N: usize> std::ops::Mul<f64> for PackedVec3<N>
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
 
     #[inline]
     fn mul(self, rhs: f64) -> Self::Output {
+        let rhs_as_simd = Simd::splat(rhs);
         PackedVec3 {
-            x: self.x * rhs,
-            y: self.y * rhs,
-            z: self.z * rhs,
+            x: self.x * rhs_as_simd,
+            y: self.y * rhs_as_simd,
+            z: self.z * rhs_as_simd,
         }
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedVec3<N> {
+impl <const N: usize> std::ops::Mul<Simd<f64, N>> for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
 
     #[inline]
-    fn mul(self, rhs: PackedF64<N>) -> Self::Output {
+    fn mul(self, rhs: Simd<f64, N>) -> Self::Output {
         PackedVec3 {
             x: self.x * rhs,
             y: self.y * rhs,
@@ -366,7 +375,9 @@ impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedVec3<N> {
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 {
+impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
 
     #[inline]
@@ -375,41 +386,33 @@ impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 {
     }
 }
 
-impl <const N: usize> std::ops::Div<f64> for PackedVec3<N> {
+impl <const N: usize> std::ops::Div<f64> for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedVec3<N>;
 
     #[inline]
     fn div(self, rhs: f64) -> Self::Output {
+        let rhs_as_simd = Simd::splat(rhs);
         PackedVec3 {
-            x: self.x / rhs,
-            y: self.y / rhs,
-            z: self.z / rhs,
+            x: self.x / rhs_as_simd,
+            y: self.y / rhs_as_simd,
+            z: self.z / rhs_as_simd,
         }
     }
 }
 
-// impl <const N: usize> std::ops::Neg for PackedVec3<N> {
-//     type Output = Self;
-
-//     fn neg(self) -> Self::Output {
-//         PackedVec3 {
-//             x: -(self.x),
-//             y: -(self.y),
-//             z: -(self.z)
-//         }
-//     }
-// }
-
-
-impl <const N: usize> PackedVec3<N> {
+impl <const N: usize> PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     
     #[inline]
-    pub fn length_squared(&self) -> PackedF64<N> {
+    pub fn length_squared(&self) -> Simd<f64, N> {
         self.x * self.x + self.y * self.y + self.z * self.z
     }
 
     #[inline]
-    pub fn length(&self) -> PackedF64<N> {
+    pub fn length(&self) -> Simd<f64, N> {
         self.length_squared().sqrt()
     }
 
@@ -431,22 +434,22 @@ impl <const N: usize> PackedVec3<N> {
     }
 
     #[inline]
-    pub fn dot(&self, rhs: &Self) -> PackedF64<N> {
+    pub fn dot(&self, rhs: &Self) -> Simd<f64, N> {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
     #[inline]
-    pub fn x(&self) -> PackedF64<N> {
+    pub fn x(&self) -> Simd<f64, N> {
         self.x
     }
 
     #[inline]
-    pub fn y(&self) -> PackedF64<N> {
+    pub fn y(&self) -> Simd<f64, N> {
         self.y
     }
 
     #[inline]
-    pub fn z(&self) -> PackedF64<N> {
+    pub fn z(&self) -> Simd<f64, N> {
         self.z
     }
 

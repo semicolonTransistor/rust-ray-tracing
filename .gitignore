@@ -6,3 +6,4 @@
 
 *.toml
 !cargo.toml
+r*/**

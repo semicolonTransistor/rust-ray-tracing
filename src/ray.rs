@@ -1,5 +1,6 @@
+use std::simd::{LaneCount, SupportedLaneCount, Mask, Simd, SimdElement};
+
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
-use crate::packed::{PackedF64, PackedF64Mask, Mask};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -32,24 +33,29 @@ impl Ray {
 
 #[derive(Debug)]
 #[derive(Copy, Clone)]
-pub struct PackedRays<const N: usize> {
+pub struct PackedRays<const N: usize> 
+where
+    LaneCount<N>: SupportedLaneCount,
+{
     origins: PackedPoint3<N>,
     directions: PackedVec3<N>,
-    enabled: PackedF64Mask<N>
+    enabled: Mask<<f64 as SimdElement>::Mask, N>
 }
 
-impl <const N: usize> PackedRays<N> {
+impl <const N: usize> PackedRays<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     #[inline]
     pub fn new(origins: PackedPoint3<N>, directions: PackedVec3<N>) -> PackedRays<N> {
         PackedRays {
             origins,
             directions,
-            enabled: PackedF64Mask::<N>::broadcast_bool(true)
+            enabled: Mask::splat(true)
         }
     }
 
     #[inline]
-    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: PackedF64Mask<N>) -> PackedRays<N> {
+    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: Mask<<f64 as SimdElement>::Mask, N>) -> PackedRays<N> {
         PackedRays { origins, directions, enabled }
     }
 
@@ -64,13 +70,13 @@ impl <const N: usize> PackedRays<N> {
     }
 
     #[inline]
-    pub fn enabled(&self) -> PackedF64Mask<N> {
+    pub fn enabled(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
         self.enabled
     }
 
     #[inline]
     pub fn is_enabled(&self, index: usize) -> bool {
-        self.enabled[index].to_bool()
+        self.enabled.test(index)
     }
 
     #[inline]
@@ -80,7 +86,7 @@ impl <const N: usize> PackedRays<N> {
 
     #[inline]
     pub fn at(&self, index: usize) -> Option<Ray> {
-        if self.enabled[index].to_bool() {
+        if self.enabled.test(index) {
             Some(Ray::new(self.origins.at(index), self.directions.at(index)))
         } else {
             None
@@ -93,7 +99,7 @@ impl <const N: usize> PackedRays<N> {
     }
 
     #[inline]
-    pub fn at_t(&self, t: PackedF64<N>) -> PackedPoint3<N> {
+    pub fn at_t(&self, t: Simd<f64, N>) -> PackedPoint3<N> {
         self.origins + self.directions * t
     }
 
@@ -101,14 +107,14 @@ impl <const N: usize> PackedRays<N> {
     pub fn update(&mut self, index: usize, value: Ray) {
         self.origins.update(index, value.origin());
         self.directions.update(index, value.direction());
-        self.enabled[index] = u64::mask_from_bool(true);
+        self.enabled.set(index, true);
     }
 
     #[inline]
     pub fn update_with_enable(&mut self, index: usize, value: Ray, enable: bool) {
         self.origins.update(index, value.origin());
         self.directions.update(index, value.direction());
-        self.enabled[index] = u64::mask_from_bool(enable);
+        self.enabled.set(index, enable);
     }
 
     #[inline]
@@ -118,21 +124,23 @@ impl <const N: usize> PackedRays<N> {
 
     #[inline]
     pub fn enable(&mut self, index: usize) {
-        self.enabled[index] = u64::mask_from_bool(true);
+        self.enabled.set(index, true)
     }
 
     #[inline]
     pub fn disable(&mut self, index: usize) {
-        self.enabled[index] = u64::mask_from_bool(false);
+        self.enabled.set(index, false);
     }
 }
 
-impl <const N: usize> FromIterator<Ray> for PackedRays<N> {
+impl <const N: usize> FromIterator<Ray> for PackedRays<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     fn from_iter<T: IntoIterator<Item = Ray>>(iter: T) -> Self {
         let mut packed_rays = PackedRays {
             directions: PackedVec3::default(),
             origins: PackedPoint3::default(),
-            enabled: PackedF64Mask::broadcast_bool(false)
+            enabled: Mask::splat(false)
         };
 
         for (index, value) in iter.into_iter().enumerate() {

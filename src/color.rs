@@ -1,5 +1,8 @@
 use crate::toml_utils::to_float;
-use crate::packed::{PackedF64, PackedScalerPartialEq, PackedScalerPartialOrd, PackedF64Mask};
+
+use std::simd::{Simd, Mask, LaneCount, SupportedLaneCount, cmp::SimdPartialOrd, SimdElement};
+use array_macro::array;
+use crate::simd_util::masked_assign;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -171,27 +174,37 @@ impl std::fmt::Display for Color {
 
 #[derive(Debug)]
 #[derive(Copy, Clone)]
-pub struct PackedColor<const N: usize> {
-    red: PackedF64<N>,
-    green: PackedF64<N>,
-    blue: PackedF64<N>
+pub struct PackedColor<const N: usize> 
+where LaneCount<N>: SupportedLaneCount
+{
+    red: Simd<f64, N>,
+    green: Simd<f64, N>,
+    blue: Simd<f64, N>
 }
 
-impl <const N: usize> PackedColor<N> {
+impl <const N: usize> PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     #[inline]
     pub fn broadcast_scaler(color: Color) -> PackedColor<N> {
+        Self::splat(color)
+    }
+
+    #[inline]
+    pub fn splat(color: Color) -> PackedColor<N> {
         PackedColor {
-            red: PackedF64::broadcast_scaler(color.red),
-            green: PackedF64::broadcast_scaler(color.green),
-            blue: PackedF64::broadcast_scaler(color.blue),
+            red: Simd::splat(color.red),
+            green: Simd::splat(color.green),
+            blue: Simd::splat(color.blue),
         }
     }
 
     #[inline]
-    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: PackedF64Mask<N>) {
-        self.red.assign_masked(colors.red, mask);
-        self.green.assign_masked(colors.green, mask);
-        self.blue.assign_masked(colors.blue, mask);
+    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: Mask<<f64 as SimdElement>::Mask, N>) {
+        
+        masked_assign(&mut self.red, colors.red, mask);
+        masked_assign(&mut self.green, colors.green, mask);
+        masked_assign(&mut self.blue, colors.blue, mask);
     }
 
     #[inline]
@@ -213,20 +226,23 @@ impl <const N: usize> PackedColor<N> {
     #[inline]
     pub fn sum(&self) -> Color {
         Color {
-            red: self.red.sum(),
-            green: self.green.sum(),
-            blue: self.blue.sum()
+            red: self.red.as_array().iter().sum(),
+            green: self.green.as_array().iter().sum(),
+            blue: self.blue.as_array().iter().sum()
         }
     }
 
+    #[inline]
     pub fn check(&self) {
-        assert!(PackedScalerPartialOrd::le(&self.red, &1.01).all(), "RED Expect <= 1.0, got{:?}", self.red);
-        assert!(PackedScalerPartialOrd::le(&self.green, &1.01).all(), "GREEN Expect <= 1.0, got{:?}", self.green);
-        assert!(PackedScalerPartialOrd::le(&self.blue, &1.01).all(), "BLUE Expect <= 1.0, got{:?}", self.blue);
+        assert!((self.red.simd_lt(Simd::splat(1.01))).all(), "RED Expect <= 1.0, got{:?}", self.red);
+        assert!((self.green.simd_lt(Simd::splat(1.01))).all(), "GREEN Expect <= 1.0, got{:?}", self.green);
+        assert!((self.blue.simd_lt(Simd::splat(1.01))).all(), "BLUE Expect <= 1.0, got{:?}", self.blue);
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedColor<N> {
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedColor<N>;
     #[inline]
     fn mul(self, rhs: PackedColor<N>) -> Self::Output {
@@ -238,10 +254,12 @@ impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedColor<N> {
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedColor<N> {
+impl <const N: usize> std::ops::Mul<Simd<f64, N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedColor<N>;
     #[inline]
-    fn mul(self, rhs: PackedF64<N>) -> Self::Output {
+    fn mul(self, rhs: Simd<f64, N>) -> Self::Output {
         PackedColor{
             red: self.red * rhs,
             green: self.green * rhs,
@@ -250,7 +268,9 @@ impl <const N: usize> std::ops::Mul<PackedF64<N>> for PackedColor<N> {
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedF64<N> {
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for Simd<f64, N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedColor<N>;
     #[inline]
     fn mul(self, rhs: PackedColor<N>) -> Self::Output {
@@ -262,7 +282,9 @@ impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedF64<N> {
     }
 }
 
-impl <const N: usize> std::ops::Add<PackedColor<N>> for PackedColor<N> {
+impl <const N: usize> std::ops::Add<PackedColor<N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     type Output = PackedColor<N>;
     #[inline]
     fn add(self, rhs: PackedColor<N>) -> Self::Output {

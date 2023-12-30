@@ -1,9 +1,10 @@
 use crate::color::PackedColor;
-use crate::packed::{PackedF64Mask, Scaler, Mask};
 use crate::{color::Color, objects::Object};
 use crate::objects::{HitRecord, PackedHitRecords, HitResult};
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
 use crate::ray::{Ray, PackedRays};
+
+use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement};
 
 use std::fmt::Debug;
 use rand::prelude::*;
@@ -114,7 +115,9 @@ struct CombinedIndex<const N: usize> {
     slot_index: usize
 }
 
-impl <const N: usize> CombinedIndex<N> {
+impl <const N: usize> CombinedIndex<N> 
+where LaneCount<N>: SupportedLaneCount
+{
     fn before_first(rays: &[PackedRays<N>]) -> CombinedIndex<N>{
         return CombinedIndex { chuck_index: 0, slot_index: N }
     }
@@ -307,10 +310,11 @@ impl Scene {
         mut rays: PackedRays<N>,
         depth_limit: usize,
     ) -> PackedColor<N> 
+    where LaneCount<N>: SupportedLaneCount
     {
-        let mut color = PackedColor::<N>::broadcast_scaler(Color::black());
-        color.assign_masked(PackedColor::broadcast_scaler(Color::white()), rays.enabled());
-        let mut hit_sky = PackedF64Mask::<N>::broadcast_bool(false);
+        let mut color = PackedColor::splat(Color::black());
+        color.assign_masked(PackedColor::splat(Color::white()), rays.enabled());
+        let mut hit_sky = Mask::splat(false);
 
         for _ in 0..depth_limit {
             if !rays.any_enabled() {
@@ -343,8 +347,9 @@ impl Scene {
                         }
                     },
                     None => {
+                        // we hit the sky
                         rays.disable(i);
-                        hit_sky[i] = <f64 as Scaler>::MaskType::mask_from_bool(true);
+                        hit_sky.set(i, true)
                     },
                 }
             }
@@ -353,9 +358,9 @@ impl Scene {
         }
 
         // apply sky color to those rays that didn't hit the sky
-        let a = (rays.directions().y() + 1.0) * 0.5;
-        let sky_color_part_1 = PackedColor::<N>::broadcast_scaler(Color::white()) * (-a + 1.0);
-        let sky_color_part_2 = PackedColor::<N>::broadcast_scaler(Color::new(0.5, 0.7, 1.0)) * a;
+        let a = (rays.directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+        let sky_color_part_1 = PackedColor::splat(Color::white()) * (-a + Simd::splat(1.0));
+        let sky_color_part_2 = PackedColor::splat(Color::new(0.5, 0.7, 1.0)) * a;
         let sky_color = sky_color_part_1 + sky_color_part_2;
         color.assign_masked(color * sky_color, hit_sky);
         color.assign_masked(PackedColor::<N>::broadcast_scaler(Color::black()), rays.enabled());
@@ -367,10 +372,12 @@ impl Scene {
         &self,
         rays: &[PackedRays<N>],
         depth_limit: usize,
-    ) -> Color {
+    ) -> Color 
+    where LaneCount<N>: SupportedLaneCount
+    {
         let mut ray_buffers: [Vec<PackedRays<N>>; 2] = [rays.to_vec(), vec![PackedRays::<N>::new(PackedVec3::default(), PackedVec3::default()); rays.len()]];
         let mut color:[Vec<PackedColor<N>>; 2] = array![vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()]; 2];
-        let mut hit_sky: [Vec<PackedF64Mask<N>>; 2] = array![vec![PackedF64Mask::<N>::broadcast_bool(false); rays.len()]; 2];
+        let mut hit_sky: [Vec<Mask<<f64 as SimdElement>::Mask,N>>; 2] = array![vec![Mask::splat(false); rays.len()]; 2];
 
         let mut last_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -409,7 +416,7 @@ impl Scene {
                         },
                         None => {
                             ray_buffers[selector][j].disable(i);
-                            hit_sky[selector][j][i] = u64::mask_from_bool(true);
+                            hit_sky[selector][j].set(i, true);
                         },
                     }
                 }
@@ -431,8 +438,8 @@ impl Scene {
                             ray_buffers[next_selector][output_chunk].update(output_slot, ray);
                             let tmp_color = color[selector][i].at(j);
                             color[next_selector][output_chunk].update(tmp_color, output_slot);
-                            let tmp_hit_sky = hit_sky[selector][i][j];
-                            hit_sky[next_selector][output_chunk][output_slot] = tmp_hit_sky;
+                            let tmp_hit_sky = hit_sky[selector][i].test(j);
+                            hit_sky[next_selector][output_chunk].set(output_slot, tmp_hit_sky);
 
                             output_slot += 1;
 
@@ -456,8 +463,8 @@ impl Scene {
                         ray_buffers[next_selector][output_chunk].update_with_enable(output_slot, ray, false);
                         let tmp_color = color[selector][i].at(j);
                         color[next_selector][output_chunk].update(tmp_color, output_slot);
-                        let tmp_hit_sky = hit_sky[selector][i][j];
-                        hit_sky[next_selector][output_chunk][output_slot] = tmp_hit_sky;
+                        let tmp_hit_sky = hit_sky[selector][i].test(j);
+                        hit_sky[next_selector][output_chunk].set(output_slot, tmp_hit_sky);
 
                         output_slot += 1;
 
@@ -476,8 +483,8 @@ impl Scene {
 
         for j in 0..rays.len() {
             // apply sky color to those rays that didn't hit the sky
-            let a = (rays[j].directions().y() + 1.0) * 0.5;
-            let sky_color_part_1 = PackedColor::<N>::broadcast_scaler(Color::white()) * (-a + 1.0);
+            let a = (rays[j].directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+            let sky_color_part_1 = PackedColor::<N>::broadcast_scaler(Color::white()) * (-a + Simd::splat(1.0));
             let sky_color_part_2 = PackedColor::<N>::broadcast_scaler(Color::new(0.5, 0.7, 1.0)) * a;
             let sky_color = sky_color_part_1 + sky_color_part_2;
             let sky_color_result = color[selector][j] * sky_color;
@@ -497,9 +504,11 @@ impl Scene {
         &self,
         rays: &mut [PackedRays<N>],
         depth_limit: usize,
-    ) -> Color {
+    ) -> Color 
+    where LaneCount<N>: SupportedLaneCount
+    {
         let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
-        let mut hit_sky = vec![PackedF64Mask::<N>::broadcast_bool(false); rays.len()];
+        let mut hit_sky:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
 
         let mut last_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -538,7 +547,7 @@ impl Scene {
                         },
                         None => {
                             rays[j].disable(i);
-                            hit_sky[j][i] = u64::mask_from_bool(true);
+                            hit_sky[j].set(i, true);
                         },
                     }
                 }
@@ -547,7 +556,10 @@ impl Scene {
             // shuffle;
 
             let mut front_index = CombinedIndex::before_first(&rays);
-            let mut back_index = CombinedIndex::after_last(&rays);
+            let mut back_index = CombinedIndex {
+                chuck_index: last_active_chunk,
+                slot_index: 0,
+            };
 
             loop {
                 front_index = match front_index.next_disabled(&rays) {
@@ -582,10 +594,10 @@ impl Scene {
                 color[front_index.chuck_index].update(back_color, front_index.slot_index);
                 color[back_index.chuck_index].update(front_color, back_index.slot_index);
 
-                let front_hit_sky = hit_sky[front_index.chuck_index][front_index.slot_index];
-                let back_hit_sky = hit_sky[back_index.chuck_index][back_index.slot_index];
-                hit_sky[front_index.chuck_index][front_index.slot_index] = back_hit_sky;
-                hit_sky[back_index.chuck_index][back_index.slot_index] = front_hit_sky;
+                let front_hit_sky = hit_sky[front_index.chuck_index].test(front_index.slot_index);
+                let back_hit_sky = hit_sky[back_index.chuck_index].test(back_index.slot_index);
+                hit_sky[front_index.chuck_index].set(front_index.slot_index, back_hit_sky);
+                hit_sky[back_index.chuck_index].set(back_index.slot_index, front_hit_sky);
 
             }
         }
@@ -593,9 +605,9 @@ impl Scene {
 
         for j in 0..rays.len() {
             // apply sky color to those rays that didn't hit the sky
-            let a = (rays[j].directions().y() + 1.0) * 0.5;
-            let sky_color_part_1 = PackedColor::<N>::broadcast_scaler(Color::white()) * (-a + 1.0);
-            let sky_color_part_2 = PackedColor::<N>::broadcast_scaler(Color::new(0.5, 0.7, 1.0)) * a;
+            let a = (rays[j].directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+            let sky_color_part_1 = PackedColor::splat(Color::white()) * (Simd::splat(1.0) - a);
+            let sky_color_part_2 = PackedColor::splat(Color::new(0.5, 0.7, 1.0)) * a;
             let sky_color = sky_color_part_1 + sky_color_part_2;
             let sky_color_result = color[j] * sky_color;
             color[j].assign_masked(sky_color_result, hit_sky[j]);
