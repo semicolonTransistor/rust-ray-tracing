@@ -3,6 +3,7 @@ use crate::{color::Color, objects::Object};
 use crate::objects::{HitRecord, PackedHitRecords, HitResult};
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
 use crate::ray::{Ray, PackedRays};
+use crate::simd_util::SimdPermute;
 
 use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement};
 
@@ -26,9 +27,9 @@ pub struct Camera {
 impl Camera {
     pub fn new(image_width: usize, image_height: usize, focal_length: f64, view_angle: f64, center: Point3, look_at: Vec3, up: Vec3, defocus_angle: f64) -> Camera {
         let aspect_ratio = (image_width as f64) / (image_height as f64);
-        let diagonal_length = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
-        let upper_left_diagonal_angle = aspect_ratio.atan();
-        let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
+        let viewport_height = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
+        // let upper_left_diagonal_angle = aspect_ratio.atan();
+        // let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
         let viewport_width = viewport_height * aspect_ratio;
 
         let direction = (look_at - center).unit();
@@ -305,6 +306,10 @@ impl Scene {
         }).collect()
     }
 
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+
     pub fn trace_vectorized<const N: usize>(
         &self,
         mut rays: PackedRays<N>,
@@ -500,6 +505,7 @@ impl Scene {
         sum_color.sum()
     }
 
+    // #[inline(never)]
     pub fn trace_vectorized3<const N: usize> (
         &self,
         rays: &mut [PackedRays<N>],
@@ -510,15 +516,15 @@ impl Scene {
         let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
         let mut hit_sky:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
 
-        let mut last_active_chunk = rays.len(); // set to one above the last active chunk
+        let mut num_active_chunk = rays.len(); // set to one above the last active chunk
 
         for _ in 0..depth_limit {
-            if last_active_chunk == 0 {
+            if num_active_chunk == 0 {
                 // all rays have ended
                 break;
             }
 
-            for j in 0..last_active_chunk {
+            for j in 0..num_active_chunk {
                 let mut hit_records = PackedHitRecords::<N>::default();
 
                 for object in &self.objects {
@@ -557,7 +563,7 @@ impl Scene {
 
             let mut front_index = CombinedIndex::before_first(&rays);
             let mut back_index = CombinedIndex {
-                chuck_index: last_active_chunk,
+                chuck_index: num_active_chunk,
                 slot_index: 0,
             };
 
@@ -565,7 +571,7 @@ impl Scene {
                 front_index = match front_index.next_disabled(&rays) {
                     Some(ci) => ci,
                     None => {
-                        last_active_chunk = rays.len();
+                        num_active_chunk = rays.len();
                         break;
                     },
                 };
@@ -573,13 +579,13 @@ impl Scene {
                 back_index = match back_index.previous_enabled(&rays) {
                     Some(ci) => ci,
                     None => {
-                        last_active_chunk = 0;
+                        num_active_chunk = 0;
                         break;
                     },
                 };
 
                 if front_index.chuck_index >= back_index.chuck_index {
-                    last_active_chunk = back_index.chuck_index + 1;
+                    num_active_chunk = back_index.chuck_index + 1;
                     break;
                 }
 
@@ -600,6 +606,118 @@ impl Scene {
                 hit_sky[back_index.chuck_index].set(back_index.slot_index, front_hit_sky);
 
             }
+        }
+
+
+        for j in 0..rays.len() {
+            // apply sky color to those rays that didn't hit the sky
+            let a = (rays[j].directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+            let sky_color_part_1 = PackedColor::splat(Color::white()) * (Simd::splat(1.0) - a);
+            let sky_color_part_2 = PackedColor::splat(Color::new(0.5, 0.7, 1.0)) * a;
+            let sky_color = sky_color_part_1 + sky_color_part_2;
+            let sky_color_result = color[j] * sky_color;
+            color[j].assign_masked(sky_color_result, hit_sky[j]);
+            color[j].assign_masked(PackedColor::<N>::broadcast_scaler(Color::black()), rays[j].enabled());
+        }
+
+        let mut sum_color = PackedColor::<N>::broadcast_scaler(Color::black());
+        for color_chunk in &color {
+            sum_color = sum_color +  *color_chunk;
+        }
+
+        sum_color.sum()
+    }
+
+    #[inline(never)]
+    pub fn trace_vectorized4<const N: usize> (
+        &self,
+        rays: &mut [PackedRays<N>],
+        depth_limit: usize,
+    ) -> Color 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
+        let mut hit_sky:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
+
+        let mut color_buffer = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()]; 
+        let mut hit_sky_buffer:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
+        let mut ray_buffer = vec![PackedRays::<N>::new(PackedVec3::default(), PackedVec3::default()); rays.len()];
+        let mut chunk_indices = vec![Simd::<usize, N>::splat(0); rays.len() + 1];
+        let mut lane_indices = vec![Simd::<usize, N>::splat(0); rays.len() + 1];
+
+        let mut num_active_chunk = rays.len(); // set to one above the last active chunk
+
+        for round in 0..depth_limit {
+            if num_active_chunk == 0 {
+                // all rays have ended
+                break;
+            }
+
+            for j in 0..num_active_chunk {
+                let mut hit_records = PackedHitRecords::<N>::default();
+
+                for object in &self.objects {
+                    object.hit_packed(&rays[j], &(0.001..f64::INFINITY), &mut hit_records)
+                }
+
+                hit_records.finalize(&rays[j]);
+
+
+                // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
+
+                for i in 0..N {
+                    match hit_records.at(i) {
+                        Some(hit_record) => {
+                            let hit_result = hit_record.hit_result(&(rays[j].at(i).unwrap()));
+                            let new_color = color[j].at(i) * hit_result.attenuation();
+                            color[j].update(new_color, i);
+                            match hit_result.scattered_ray() {
+                                Some(ray) => {
+                                    rays[j].update(i, *ray);
+                                },
+                                None => {
+                                    rays[j].disable(i);
+                                },
+                            }
+                        },
+                        None => {
+                            rays[j].disable(i);
+                            hit_sky[j].set(i, true);
+                        },
+                    }
+                }
+            }
+            
+            // shuffle;
+            let mut write_index = 0;
+            for i in 0..num_active_chunk {
+                for j in 0..N {
+                    chunk_indices[write_index / N][write_index % N] = i;
+                    lane_indices[write_index / N][write_index % N] = j;
+                    if rays[i].is_enabled(j) {
+                        write_index += 1;
+                    }
+                }
+            }
+
+            let new_num_active_chunk = (write_index + N - 1) / N;
+
+            for i in 0..num_active_chunk {
+                for j in 0..N {
+                    // println!("{}, {}, {}", write_index, i, j);
+                    chunk_indices[write_index / N][write_index % N] = i;
+                    lane_indices[write_index / N][write_index % N] = j;
+                    if !(rays[i].is_enabled(j)) {
+                        write_index += 1;
+                    }
+                }
+            }
+
+            (&mut rays[0..num_active_chunk]).permute(&mut ray_buffer[0..num_active_chunk], &chunk_indices[0..num_active_chunk], &lane_indices[0..num_active_chunk]);
+            (&mut color[0..num_active_chunk]).permute(&mut color_buffer[0..num_active_chunk], &chunk_indices[0..num_active_chunk], &lane_indices[0..num_active_chunk]);
+            (&mut hit_sky[0..num_active_chunk]).permute(&mut hit_sky_buffer[0..num_active_chunk], &chunk_indices[0..num_active_chunk], &lane_indices[0..num_active_chunk]);
+
+            num_active_chunk = new_num_active_chunk;
         }
 
 

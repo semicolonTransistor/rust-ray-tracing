@@ -40,22 +40,24 @@ fn main() -> image::ImageResult<()> {
 
     let materials = get_materials(scene_data["materials"].as_table().unwrap());
 
-    let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["objects"].as_array().unwrap(), &materials)));
+    let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["hitables"].as_array().unwrap(), &materials)));
 
-    // let image_width = 3840;
-    // let image_height = 2160;
-    let image_width = 1280;
-    let image_height = 720;
+    let image_width = 3840;
+    let image_height = 2160;
+    // let image_width = 1280;
+    // let image_height = 720;
     // let max_pixel_value = 256;
 
     let camera = Arc::new(Camera::new(
         image_width, image_height,
         10.0, 30.0, 
-        Vec3::new(13.0, 2.0, 3.0),
+        Vec3::new(16.0, 2.0, 18.5),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 1.0, 0.0),
-        0.6
+        0.0
     ));
+
+    println!("\t Number of objects: \t {}", scene.len());
 
     let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
 

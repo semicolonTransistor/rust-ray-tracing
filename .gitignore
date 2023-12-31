@@ -6,4 +6,5 @@
 
 *.toml
 !cargo.toml
+!rust-toolchain.toml
 r*/**

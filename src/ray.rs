@@ -1,6 +1,6 @@
 use std::simd::{LaneCount, SupportedLaneCount, Mask, Simd, SimdElement};
 
-use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
+use crate::{geometry::{Vec3, Point3, PackedVec3, PackedPoint3}, simd_util::SimdPermute};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -149,5 +149,37 @@ where LaneCount<N>: SupportedLaneCount
         }
 
         packed_rays
+    }
+}
+
+impl <const N: usize> SimdPermute<N> for &mut [PackedRays<N>] 
+where
+    LaneCount<N>: SupportedLaneCount
+{
+    #[inline]
+    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
+        unsafe {
+            tmp_buffer.copy_from_slice(self);
+            let temp_as_slice: &[f64] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N * 7);
+            let temp_as_mask_slice: &[<f64 as SimdElement>::Mask] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N * 7);
+            
+            for i in 0..self.len() {
+                self[i].origins = PackedVec3::from_simd(
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + lane_indices[i]),
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(N) + lane_indices[i]),
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(2 * N) + lane_indices[i])
+                );
+
+                self[i].directions = PackedVec3::from_simd(
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(3 * N) + lane_indices[i]),
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(4 * N) + lane_indices[i]),
+                    Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(5 * N) + lane_indices[i])
+                );
+
+                self[i].enabled = std::mem::transmute_copy(
+                    &Simd::gather_or_default(temp_as_mask_slice, chunk_indices[i] * Simd::splat(N * 7) + Simd::splat(6 * N) + lane_indices[i])
+                )
+            }
+        }
     }
 }

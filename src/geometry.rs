@@ -1,7 +1,7 @@
 use rand::prelude::*;
-use crate::toml_utils::to_float;
+use crate::{toml_utils::to_float, simd_util::SimdPermute};
 use array_macro::array;
-use std::simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement};
+use std::{simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement}, ops::Mul};
 use crate::simd_util::masked_assign;
 
 #[derive(Debug)]
@@ -244,6 +244,15 @@ where
     }
 
     #[inline]
+    pub fn from_simd(x: Simd<f64, N>, y: Simd<f64, N>, z: Simd<f64, N>) -> PackedVec3<N>{
+        PackedVec3 {
+            x,
+            y,
+            z
+        }
+    }
+
+    #[inline]
     pub fn from_vec3s(vec3s: &[Vec3]) -> PackedVec3<N> {
         assert!(vec3s.len() == N);
 
@@ -386,6 +395,21 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
+impl <const N: usize> std::ops::Div<Simd<f64, N>> for PackedVec3<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    type Output = PackedVec3<N>;
+
+    #[inline]
+    fn div(self, rhs: Simd<f64, N>) -> Self::Output {
+        PackedVec3 {
+            x: self.x / rhs,
+            y: self.y / rhs,
+            z: self.z / rhs,
+        }
+    }
+}
+
 impl <const N: usize> std::ops::Div<f64> for PackedVec3<N> 
 where LaneCount<N>: SupportedLaneCount
 {
@@ -408,12 +432,17 @@ where LaneCount<N>: SupportedLaneCount
     
     #[inline]
     pub fn length_squared(&self) -> Simd<f64, N> {
-        self.x * self.x + self.y * self.y + self.z * self.z
+        self.z.mul_add(self.z , self.y.mul_add(self.y, self.x * self.x))
     }
 
     #[inline]
     pub fn length(&self) -> Simd<f64, N> {
         self.length_squared().sqrt()
+    }
+
+    #[inline]
+    pub fn unit_vector(&self) -> PackedVec3<N> {
+        *self / self.length()
     }
 
     #[inline]
@@ -435,7 +464,7 @@ where LaneCount<N>: SupportedLaneCount
 
     #[inline]
     pub fn dot(&self, rhs: &Self) -> Simd<f64, N> {
-        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
+        self.z.mul_add(rhs.z , self.y.mul_add(rhs.y, self.x * rhs.x))
     }
 
     #[inline]
@@ -453,4 +482,24 @@ where LaneCount<N>: SupportedLaneCount
         self.z
     }
 
+}
+
+
+impl <const N: usize> SimdPermute<N> for &mut [PackedVec3<N>] 
+where 
+    LaneCount<N>: SupportedLaneCount
+{   
+    #[inline]
+    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
+            unsafe {
+                tmp_buffer.copy_from_slice(self);
+                let temp_as_slice: &[f64] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N * 3);
+                
+                for i in 0..self.len() {
+                    self[i].x = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + lane_indices[i]);
+                    self[i].y = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(N) + lane_indices[i]);
+                    self[i].z = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(2 * N) + lane_indices[i]);
+                }
+            }
+    }
 }
