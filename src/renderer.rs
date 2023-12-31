@@ -212,42 +212,6 @@ impl TileRenderTask {
         }
     }
 
-    fn render_vectorized4(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 4;
-        let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
-
-        let col_offset = self.block_index_x * self.block_size;
-        let row_offset = self.block_index_y * self.block_size;
-
-        let start = std::time::Instant::now();
-        for j in 0..self.size_y {
-            for i in 0..self.size_x {
-
-                let col = i + col_offset;
-                let row = j + row_offset;
-                
-                let mut ray_chunks: Vec<PackedRays<N>> = vec![];
-
-                for chunk in &(0..samples_per_pixel).map(|_| camera.get_ray(col, row)).chunks(N) {
-                    ray_chunks.push(chunk.collect());
-                }
-
-                let pixel = scene.trace_vectorized4(&mut ray_chunks, max_bounces) / (samples_per_pixel as f64);
-
-                result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
-            }
-        }
-        let duration = std::time::Instant::now().duration_since(start);
-        let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
-
-        TileRenderResult {
-            block_index_x: self.block_index_x,
-            block_index_y: self.block_index_y,
-            thread_id: thread_id,
-            average_pixel_throughput: pixels_per_second,
-            output: result
-        }
-    }
 }
 
 #[derive(Debug)]

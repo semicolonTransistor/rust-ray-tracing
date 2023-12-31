@@ -1,7 +1,6 @@
-use crate::{toml_utils::to_float, simd_util::SimdPermute};
+use crate::toml_utils::to_float;
 
 use std::simd::{Simd, Mask, LaneCount, SupportedLaneCount, cmp::SimdPartialOrd, SimdElement};
-use array_macro::array;
 use crate::simd_util::masked_assign;
 
 #[derive(Debug)]
@@ -293,24 +292,5 @@ where LaneCount<N>: SupportedLaneCount
             green: self.green + rhs.green,
             blue: self.blue + rhs.blue,
         }
-    }
-}
-
-impl <const N: usize> SimdPermute<N> for &mut [PackedColor<N>] 
-where 
-    LaneCount<N>: SupportedLaneCount
-{
-    #[inline]
-    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
-            unsafe {
-                tmp_buffer.copy_from_slice(self);
-                let temp_as_slice: &[f64] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N * 3);
-                
-                for i in 0..self.len() {
-                    self[i].red = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + lane_indices[i]);
-                    self[i].green = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(N) + lane_indices[i]);
-                    self[i].blue = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(2 * N) + lane_indices[i]);
-                }
-            }
     }
 }

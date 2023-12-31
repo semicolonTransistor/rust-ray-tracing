@@ -1,9 +1,5 @@
 use std::{simd::{SupportedLaneCount, LaneCount, Simd, Mask, SimdElement, MaskElement, cmp::SimdPartialOrd, cmp::SimdPartialEq, StdFloat}, ops::{RangeBounds, Bound, Neg}, mem::{size_of, MaybeUninit}, marker::PhantomData};
 
-use itertools::Chunk;
-
-use crate::geometry::{Vec3, PackedVec3};
-
 #[inline]
 pub fn masked_select<T, M, const N: usize>(base: Simd<T, N>, other: Simd<T, N>, mask: Mask<M, N>) -> Simd<T, N>
 where 
@@ -130,50 +126,6 @@ where
     LaneCount<N>: SupportedLaneCount
 {
     simd_bound_check(BoundType::LOWER, values, range.start_bound()) & simd_bound_check(BoundType::UPPER, values, range.end_bound())
-}
-
-pub trait SimdPermute<const N: usize> 
-where
-    LaneCount<N>: SupportedLaneCount
-{   
-    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]);
-
-}
-
-impl <T, const N: usize> SimdPermute<N> for &mut [Simd<T,N>] 
-where 
-    T: SimdElement + Default,
-    LaneCount<N>: SupportedLaneCount
-{
-    #[inline]
-    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
-            unsafe {
-                tmp_buffer.copy_from_slice(self);
-                let temp_as_slice: &[T] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N);
-                
-                for i in 0..self.len() {
-                    self[i] = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N) + lane_indices[i]);
-                }
-            }
-    }
-}
-
-impl <T, const N: usize> SimdPermute<N> for &mut [Mask<T,N>] 
-where 
-    T: MaskElement + Default,
-    LaneCount<N>: SupportedLaneCount
-{
-    #[inline]
-    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
-            unsafe {
-                tmp_buffer.copy_from_slice(self);
-                let temp_as_slice: &[T] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N);
-                
-                for i in 0..self.len() {
-                    self[i] = std::mem::transmute_copy(&Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N) + lane_indices[i]));
-                }
-            }
-    }
 }
 
 #[derive(Debug)]

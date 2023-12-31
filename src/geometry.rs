@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use crate::{toml_utils::to_float, simd_util::SimdPermute};
+use crate::toml_utils::to_float;
 use array_macro::array;
 use std::{simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement}, ops::Mul};
 use crate::simd_util::masked_assign;
@@ -482,24 +482,4 @@ where LaneCount<N>: SupportedLaneCount
         self.z
     }
 
-}
-
-
-impl <const N: usize> SimdPermute<N> for &mut [PackedVec3<N>] 
-where 
-    LaneCount<N>: SupportedLaneCount
-{   
-    #[inline]
-    fn permute(&mut self, tmp_buffer: Self, chunk_indices: &[Simd<usize, N>], lane_indices: &[Simd<usize, N>]) {
-            unsafe {
-                tmp_buffer.copy_from_slice(self);
-                let temp_as_slice: &[f64] = std::slice::from_raw_parts(std::mem::transmute(tmp_buffer.as_ptr()), self.len() * N * 3);
-                
-                for i in 0..self.len() {
-                    self[i].x = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + lane_indices[i]);
-                    self[i].y = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(N) + lane_indices[i]);
-                    self[i].z = Simd::gather_or_default(temp_as_slice, chunk_indices[i] * Simd::splat(N * 3) + Simd::splat(2 * N) + lane_indices[i]);
-                }
-            }
-    }
 }

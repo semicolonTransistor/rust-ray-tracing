@@ -1,5 +1,3 @@
-use array_macro::array;
-
 use crate::geometry::{Vec3, Point3};
 use crate::materials::Material;
 use crate::ray::{Ray, PackedRays};
