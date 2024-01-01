@@ -2,7 +2,7 @@ use rand::{thread_rng, Rng};
 
 use crate::geometry::Vec3;
 use crate::color::Color;
-use crate::ray_tracing::Ray;
+use crate::ray::Ray;
 use crate::objects::{HitRecord, HitResult};
 use crate::toml_utils::to_float;
 use std::collections::HashMap;
@@ -52,6 +52,7 @@ impl Lambertian {
 
 impl Material for Lambertian {
     fn get_hit_result(&self, _ray: &Ray, hit_record: &HitRecord) -> HitResult {
+
         let mut scatter_direction = Vec3::random_unit_vector() + hit_record.normal();
 
         if scatter_direction.near_zero() {
@@ -96,8 +97,8 @@ impl Material for Metal {
     }
 
     fn from_table(table: &toml::Table) -> Arc<dyn Material> where Self: Sized {
-        println!("=====================");
-        println!("{}", table);
+        // println!("=====================");
+        // println!("{}", table);
         let albedo = Color::from_toml(&table["albedo"]).unwrap();
         let fuzzy_factor = to_float(&table["fuzzy_factor"]).unwrap();
 

@@ -1,8 +1,14 @@
-use crate::{geometry::{Vec3, Point3}, color::Color, objects::Object};
-use crate::objects::HitRecord;
+use crate::color::PackedColor;
+use crate::{color::Color, objects::Object};
+use crate::objects::{HitRecord, PackedHitRecords, HitResult};
+use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
+use crate::ray::{Ray, PackedRays};
+
+use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement};
 
 use std::fmt::Debug;
 use rand::prelude::*;
+use array_macro::array;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -20,9 +26,9 @@ pub struct Camera {
 impl Camera {
     pub fn new(image_width: usize, image_height: usize, focal_length: f64, view_angle: f64, center: Point3, look_at: Vec3, up: Vec3, defocus_angle: f64) -> Camera {
         let aspect_ratio = (image_width as f64) / (image_height as f64);
-        let diagonal_length = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
-        let upper_left_diagonal_angle = aspect_ratio.atan();
-        let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
+        let viewport_height = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
+        // let upper_left_diagonal_angle = aspect_ratio.atan();
+        // let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
         let viewport_width = viewport_height * aspect_ratio;
 
         let direction = (look_at - center).unit();
@@ -92,35 +98,6 @@ impl Camera {
 }
 
 #[derive(Debug)]
-#[derive(Clone, Copy)]
-pub struct Ray {
-    origin: Point3,
-    direction: Vec3
-}
-
-impl Ray {
-    pub fn new(origin: Point3, direction: Vec3) -> Ray{
-        Ray {
-            origin: origin,
-            direction: direction,
-        }
-    }
-    
-    pub fn origin(&self) -> Point3 {
-        self.origin
-    }
-
-    pub fn direction(&self) -> Vec3 {
-        self.direction
-    }
-
-    pub fn at(&self, t: f64) -> Point3 {
-        self.origin + self.direction * t
-    }
-
-}
-
-#[derive(Debug)]
 #[derive(Clone)]
 pub struct Scene {
     objects: Vec<Object>
@@ -130,6 +107,112 @@ struct RayState {
     color: Color,
     ray: Option<Ray>
 }
+
+#[derive(Debug)]
+#[derive(Clone, Copy)]
+struct CombinedIndex<const N: usize> {
+    chuck_index: usize,
+    slot_index: usize
+}
+
+impl <const N: usize> CombinedIndex<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    fn before_first(rays: &[PackedRays<N>]) -> CombinedIndex<N>{
+        return CombinedIndex { chuck_index: 0, slot_index: N }
+    }
+
+    fn after_last(rays: &[PackedRays<N>]) -> CombinedIndex<N> {
+        return CombinedIndex { chuck_index: rays.len(), slot_index: 0 }
+    }
+
+    fn increment(&self, rays: &[PackedRays<N>]) -> Option<CombinedIndex<N>> {
+        // println!("IS {:?}", self);
+        if self.slot_index >= N {
+            // special before first
+            if rays.len() > 0 {
+                // println!("SPECIAL");
+                return Some(CombinedIndex {
+                    chuck_index: 0,
+                    slot_index: 0,
+                });
+            } else {
+                return None;
+            }
+        }else if self.slot_index < N - 1 {
+            Some(CombinedIndex {
+                chuck_index: self.chuck_index,
+                slot_index: self.slot_index + 1
+            })
+        } else if self.chuck_index < rays.len() - 1 {
+            Some(CombinedIndex {
+                chuck_index: self.chuck_index + 1,
+                slot_index: 0
+            })
+        } else {
+            None
+        }
+    }
+
+    fn decrement(&self, _: &[PackedRays<N>]) -> Option<CombinedIndex<N>> {
+        if self.slot_index > 0 {
+            Some(CombinedIndex {
+                chuck_index: self.chuck_index,
+                slot_index: self.slot_index - 1
+            })
+        } else if self.chuck_index > 0 {
+            Some(CombinedIndex {
+                chuck_index: self.chuck_index - 1,
+                slot_index: N - 1
+            })
+        } else {
+            None
+        }
+    }
+
+
+    fn next_disabled(&self, rays: &[PackedRays<N>]) -> Option<CombinedIndex<N>>{
+        let mut index = self.increment(rays);
+        // println!("NDI {:?}", index);
+        loop {
+            match index {
+                Some(safe_index) => {
+                    // println!("ND {:?}", index);
+                    if !rays[safe_index.chuck_index].is_enabled(safe_index.slot_index) {
+                        return Some(safe_index);
+                    }
+
+                    index = safe_index.increment(rays)
+                },
+                None => return None,
+            }
+
+        }
+    }
+
+    fn previous_enabled(&self, rays: &[PackedRays<N>]) -> Option<CombinedIndex<N>>{
+        let mut index = self.decrement(rays);
+        loop {
+            match index {
+                Some(safe_index) => {
+                    // println!("PE {:?}", self);
+                    if rays[safe_index.chuck_index].is_enabled(safe_index.slot_index) {
+                        return Some(safe_index);
+                    }
+
+                    index = safe_index.decrement(rays)
+                },
+                None => return None,
+            }
+
+        }
+    }
+
+    fn valid(&self, rays: &[PackedRays<N>]) -> bool {
+        self.chuck_index < rays.len() && self.slot_index < N
+    }
+}
+
 
 impl Scene {
     pub fn new() -> Scene {
@@ -146,19 +229,6 @@ impl Scene {
 
     
     pub fn hit(&self, ray: &Ray, t_range: std::ops::Range<f64>) -> Option<HitRecord> {
-        // let mut hit_record: Option<HitRecord> = None;
-        // let mut search_range = t_range;
-
-        // for object in &self.objects {
-        //     hit_record = match object.hit(ray, &search_range) {
-        //         Some(new_hit_record) => {
-        //             search_range = search_range.start..new_hit_record.t();
-        //             Some(new_hit_record)
-        //         },
-        //         None => hit_record,
-        //     }
-        // }
-
         self.objects.iter().map(|obj| {
             obj.hit(ray, &t_range)
         }).filter_map(|e| e).min_by_key(|h| {ordered_float::OrderedFloat::from(h.t())})
@@ -234,5 +304,327 @@ impl Scene {
             }
         }).collect()
     }
+
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+
+    pub fn trace_vectorized<const N: usize>(
+        &self,
+        mut rays: PackedRays<N>,
+        depth_limit: usize,
+    ) -> PackedColor<N> 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        let mut color = PackedColor::splat(Color::black());
+        color.assign_masked(PackedColor::splat(Color::white()), rays.enabled());
+        let mut hit_sky = Mask::splat(false);
+
+        for _ in 0..depth_limit {
+            if !rays.any_enabled() {
+                // all rays have ended
+                break;
+            }
+
+            let mut hit_records = PackedHitRecords::<N>::default();
+
+            for object in &self.objects {
+                object.hit_packed(&rays, &(0.001..f64::INFINITY), &mut hit_records)
+            }
+
+            hit_records.finalize(&rays);
+
+            // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
+
+            for i in 0..N {
+                match hit_records.at(i) {
+                    Some(hit_record) => {
+                        let hit_result = hit_record.hit_result(&(rays.at(i).unwrap()));
+                        color.update(color.at(i) * hit_result.attenuation(), i);
+                        match hit_result.scattered_ray() {
+                            Some(ray) => {
+                                rays.update(i, *ray);
+                            },
+                            None => {
+                                rays.disable(i);
+                            },
+                        }
+                    },
+                    None => {
+                        // we hit the sky
+                        rays.disable(i);
+                        hit_sky.set(i, true)
+                    },
+                }
+            }
+
+            // color = color * attenuations;
+        }
+
+        // apply sky color to those rays that didn't hit the sky
+        let a = (rays.directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+        let sky_color_part_1 = PackedColor::splat(Color::white()) * (-a + Simd::splat(1.0));
+        let sky_color_part_2 = PackedColor::splat(Color::new(0.5, 0.7, 1.0)) * a;
+        let sky_color = sky_color_part_1 + sky_color_part_2;
+        color.assign_masked(color * sky_color, hit_sky);
+        color.assign_masked(PackedColor::<N>::broadcast_scaler(Color::black()), rays.enabled());
+
+        color
+    }
+
+    pub fn trace_vectorized2<const N: usize> (
+        &self,
+        rays: &[PackedRays<N>],
+        depth_limit: usize,
+    ) -> Color 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        let mut ray_buffers: [Vec<PackedRays<N>>; 2] = [rays.to_vec(), vec![PackedRays::<N>::new(PackedVec3::default(), PackedVec3::default()); rays.len()]];
+        let mut color:[Vec<PackedColor<N>>; 2] = array![vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()]; 2];
+        let mut hit_sky: [Vec<Mask<<f64 as SimdElement>::Mask,N>>; 2] = array![vec![Mask::splat(false); rays.len()]; 2];
+
+        let mut last_active_chunk = rays.len(); // set to one above the last active chunk
+
+        for k in 0..depth_limit {
+            if last_active_chunk == 0 {
+                // all rays have ended
+                break;
+            }
+
+            let selector = k % 2;
+
+            for j in 0..last_active_chunk {
+                let mut hit_records = PackedHitRecords::<N>::default();
+
+                for object in &self.objects {
+                    object.hit_packed(&ray_buffers[selector][j], &(0.001..f64::INFINITY), &mut hit_records)
+                }
+
+                hit_records.finalize(&ray_buffers[selector][j]);
+                // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
+
+                for i in 0..N {
+                    match hit_records.at(i) {
+                        Some(hit_record) => {
+                            let hit_result = hit_record.hit_result(&(ray_buffers[selector][j].at(i).unwrap()));
+                            let new_color = color[selector][j].at(i) * hit_result.attenuation();
+                            color[selector][j].update(new_color, i);
+                            match hit_result.scattered_ray() {
+                                Some(ray) => {
+                                    ray_buffers[selector][j].update(i, *ray);
+                                },
+                                None => {
+                                    ray_buffers[selector][j].disable(i);
+                                },
+                            }
+                        },
+                        None => {
+                            ray_buffers[selector][j].disable(i);
+                            hit_sky[selector][j].set(i, true);
+                        },
+                    }
+                }
+            }
+            
+            // shuffle;
+            let mut output_chunk = 0;
+            let mut output_slot = 0;
+
+            let next_selector = 1 - selector;
+
+            for i in 0..last_active_chunk {
+                for j in 0..N {
+                    match ray_buffers[selector][i].at(j) {
+                        Some(ray) => {
+                            // println!("RB_LEN {:?}", ray_buffers.len());
+                            // println!("NS {}", next_selector);
+                            // println!("RB_NS_LEN {}", ray_buffers[next_selector].len());
+                            ray_buffers[next_selector][output_chunk].update(output_slot, ray);
+                            let tmp_color = color[selector][i].at(j);
+                            color[next_selector][output_chunk].update(tmp_color, output_slot);
+                            let tmp_hit_sky = hit_sky[selector][i].test(j);
+                            hit_sky[next_selector][output_chunk].set(output_slot, tmp_hit_sky);
+
+                            output_slot += 1;
+
+                            if output_slot >= N {
+                                output_slot = 0;
+                                output_chunk += 1;
+                            }
+                        },
+                        None => (),
+                    }
+                }
+            }
+
+            
+            let new_last_active_chunk = if output_slot == 0 {output_chunk} else {output_chunk + 1};
+
+            for i in 0..last_active_chunk {
+                for j in 0..N {
+                    if !ray_buffers[selector][i].is_enabled(j) {
+                        let ray = ray_buffers[selector][i].at_including_disabled(j);
+                        ray_buffers[next_selector][output_chunk].update_with_enable(output_slot, ray, false);
+                        let tmp_color = color[selector][i].at(j);
+                        color[next_selector][output_chunk].update(tmp_color, output_slot);
+                        let tmp_hit_sky = hit_sky[selector][i].test(j);
+                        hit_sky[next_selector][output_chunk].set(output_slot, tmp_hit_sky);
+
+                        output_slot += 1;
+
+                        if output_slot >= N {
+                            output_slot = 0;
+                            output_chunk += 1;
+                        }
+                    }
+                }
+            }
+
+            last_active_chunk = new_last_active_chunk;
+        }
+
+        let selector = (rays.len() - 1) % 2;
+
+        for j in 0..rays.len() {
+            // apply sky color to those rays that didn't hit the sky
+            let a = (rays[j].directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+            let sky_color_part_1 = PackedColor::<N>::broadcast_scaler(Color::white()) * (-a + Simd::splat(1.0));
+            let sky_color_part_2 = PackedColor::<N>::broadcast_scaler(Color::new(0.5, 0.7, 1.0)) * a;
+            let sky_color = sky_color_part_1 + sky_color_part_2;
+            let sky_color_result = color[selector][j] * sky_color;
+            color[selector][j].assign_masked(sky_color_result, hit_sky[selector][j]);
+            color[selector][j].assign_masked(PackedColor::<N>::broadcast_scaler(Color::black()), ray_buffers[selector][j].enabled());
+        }
+
+        let mut sum_color = PackedColor::<N>::broadcast_scaler(Color::black());
+        for color_chunk in &color[selector] {
+            sum_color = sum_color +  *color_chunk;
+        }
+
+        sum_color.sum()
+    }
+
+    // #[inline(never)]
+    pub fn trace_vectorized3<const N: usize> (
+        &self,
+        rays: &mut [PackedRays<N>],
+        depth_limit: usize,
+    ) -> Color 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
+        let mut hit_sky:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
+
+        let mut num_active_chunk = rays.len(); // set to one above the last active chunk
+
+        for _ in 0..depth_limit {
+            if num_active_chunk == 0 {
+                // all rays have ended
+                break;
+            }
+
+            for j in 0..num_active_chunk {
+                let mut hit_records = PackedHitRecords::<N>::default();
+
+                for object in &self.objects {
+                    object.hit_packed(&rays[j], &(0.001..f64::INFINITY), &mut hit_records)
+                }
+
+                hit_records.finalize(&rays[j]);
+
+
+                // let mut attenuations = PackedColor::<N>::broadcast_scaler(Color::white());
+
+                for i in 0..N {
+                    match hit_records.at(i) {
+                        Some(hit_record) => {
+                            let hit_result = hit_record.hit_result(&(rays[j].at(i).unwrap()));
+                            let new_color = color[j].at(i) * hit_result.attenuation();
+                            color[j].update(new_color, i);
+                            match hit_result.scattered_ray() {
+                                Some(ray) => {
+                                    rays[j].update(i, *ray);
+                                },
+                                None => {
+                                    rays[j].disable(i);
+                                },
+                            }
+                        },
+                        None => {
+                            rays[j].disable(i);
+                            hit_sky[j].set(i, true);
+                        },
+                    }
+                }
+            }
+            
+            // shuffle;
+
+            let mut front_index = CombinedIndex::before_first(&rays);
+            let mut back_index = CombinedIndex {
+                chuck_index: num_active_chunk,
+                slot_index: 0,
+            };
+
+            loop {
+                front_index = match front_index.next_disabled(&rays) {
+                    Some(ci) => ci,
+                    None => {
+                        num_active_chunk = rays.len();
+                        break;
+                    },
+                };
+
+                back_index = match back_index.previous_enabled(&rays) {
+                    Some(ci) => ci,
+                    None => {
+                        num_active_chunk = 0;
+                        break;
+                    },
+                };
+
+                if front_index.chuck_index >= back_index.chuck_index {
+                    num_active_chunk = back_index.chuck_index + 1;
+                    break;
+                }
+
+                // swap the items at front and back index
+                let front_ray = rays[front_index.chuck_index].at_including_disabled(front_index.slot_index);
+                let back_ray = rays[back_index.chuck_index].at_including_disabled(back_index.slot_index);
+                rays[front_index.chuck_index].update_with_enable(front_index.slot_index, back_ray, true);
+                rays[back_index.chuck_index].update_with_enable(back_index.slot_index, front_ray, false);
+
+                let front_color = color[front_index.chuck_index].at(front_index.slot_index);
+                let back_color = color[back_index.chuck_index].at(back_index.slot_index);
+                color[front_index.chuck_index].update(back_color, front_index.slot_index);
+                color[back_index.chuck_index].update(front_color, back_index.slot_index);
+
+                let front_hit_sky = hit_sky[front_index.chuck_index].test(front_index.slot_index);
+                let back_hit_sky = hit_sky[back_index.chuck_index].test(back_index.slot_index);
+                hit_sky[front_index.chuck_index].set(front_index.slot_index, back_hit_sky);
+                hit_sky[back_index.chuck_index].set(back_index.slot_index, front_hit_sky);
+
+            }
+        }
+
+
+        for j in 0..rays.len() {
+            // apply sky color to those rays that didn't hit the sky
+            let a = (rays[j].directions().y() + Simd::splat(1.0)) * Simd::splat(0.5);
+            let sky_color_part_1 = PackedColor::splat(Color::white()) * (Simd::splat(1.0) - a);
+            let sky_color_part_2 = PackedColor::splat(Color::new(0.5, 0.7, 1.0)) * a;
+            let sky_color = sky_color_part_1 + sky_color_part_2;
+            let sky_color_result = color[j] * sky_color;
+            color[j].assign_masked(sky_color_result, hit_sky[j]);
+            color[j].assign_masked(PackedColor::<N>::broadcast_scaler(Color::black()), rays[j].enabled());
+        }
+
+        let mut sum_color = PackedColor::<N>::broadcast_scaler(Color::black());
+        for color_chunk in &color {
+            sum_color = sum_color +  *color_chunk;
+        }
+
+        sum_color.sum()
+    }   
 }
  

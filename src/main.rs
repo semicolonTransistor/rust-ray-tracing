@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 mod geometry;
 mod color;
 mod ray_tracing;
@@ -5,6 +7,9 @@ mod materials;
 mod renderer;
 mod objects;
 mod toml_utils;
+// mod packed;
+mod ray;
+mod simd_util;
 
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
@@ -33,31 +38,26 @@ fn main() -> image::ImageResult<()> {
         Err(why) => panic!("Failed parsing scene from file {}: {}", path.display(), why),
     };
 
-    println!(
-        "{}", scene_data
-    );
-
     let materials = get_materials(scene_data["materials"].as_table().unwrap());
 
-    let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["objects"].as_array().unwrap(), &materials)));
+    let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["hitables"].as_array().unwrap(), &materials)));
 
-    println!("Materials {:?}", materials);
-    println!("Scene {:?}", scene);
-    // let image_width = 400;
-    // let image_height = 225;
-
-    let image_width = 1920;
-    let image_height = 1080;
+    let image_width = 3840;
+    let image_height = 2160;
+    // let image_width = 1280;
+    // let image_height = 720;
     // let max_pixel_value = 256;
 
     let camera = Arc::new(Camera::new(
         image_width, image_height,
         10.0, 30.0, 
-        Vec3::new(13.0, 2.0, 3.0),
+        Vec3::new(16.0, 2.0, 18.5),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 1.0, 0.0),
-        0.6
+        0.0
     ));
+
+    println!("\t Number of objects: \t {}", scene.len());
 
     let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
 

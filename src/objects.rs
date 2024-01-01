@@ -1,10 +1,14 @@
 use crate::geometry::{Vec3, Point3};
 use crate::materials::Material;
-use crate::ray_tracing::Ray;
+use crate::ray::{Ray, PackedRays};
 use crate::color::Color;
 use crate::toml_utils::to_float;
+use crate::geometry::{PackedVec3, PackedPoint3};
+use crate::simd_util::{masked_assign, simd_inside, PackedOptionalReference, negate_simd_float, masked_select};
 
 use std::collections::HashMap;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement, StdFloat};
 use std::sync::Arc;
 use std::fmt::Debug;
 
@@ -18,6 +22,15 @@ impl Object {
     pub fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
         match self {
             Object::Sphere(s) => s.hit(ray, t_range),
+        }
+    }
+
+    // #[inline(never)]
+    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        match self {
+            Object::Sphere(s) => s.hit_packed(rays, t_range, hit_records),
         }
     }
 }
@@ -90,10 +103,101 @@ impl HitRecord<'_> {
     }
 }
 
-pub trait Hittable : Debug + Sync + Send {
-    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord>;
 
-    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized;
+#[derive(Debug)]
+#[derive(Clone)]
+pub struct PackedHitRecords<'a, const N: usize> 
+where LaneCount<N>: SupportedLaneCount
+{
+    locations: PackedPoint3<N>,
+    normals: PackedVec3<N>,
+    t: Simd<f64, N>,
+    front_face: Mask<<f64 as SimdElement>::Mask, N>,
+    hits:  Mask<<f64 as SimdElement>::Mask, N>,
+    materials: PackedOptionalReference<'a, Arc<dyn Material>, N>
+    // materials: [Option<&'a Arc<dyn Material>>; N]
+}
+
+impl <const N: usize> Default for PackedHitRecords<'_, N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    fn default() -> Self {
+        PackedHitRecords {
+            locations: PackedPoint3::default(),
+            normals: PackedVec3::default(),
+            t: Simd::splat(f64::INFINITY),
+            front_face: Mask::splat(false),
+            hits: Mask::splat(false),
+            materials: PackedOptionalReference::nones(),
+        }
+    }
+}
+
+impl <'a, const N: usize> PackedHitRecords<'a, N> 
+where 
+    LaneCount<N>: SupportedLaneCount
+{
+    pub fn update(&mut self, rays: &PackedRays<N>, outward_normals: &PackedVec3<N>, t: &Simd<f64, N>, valid_mask: &Mask<<f64 as SimdElement>::Mask, N>, material: &'a Arc<dyn Material>) {
+        let update_mask = *valid_mask & (t.simd_le(self.t));
+
+        self.normals.assign_masked(outward_normals, update_mask);
+        masked_assign(&mut self.t, *t, update_mask);
+        self.hits = self.hits | update_mask;
+
+        self.materials.assign_masked(&PackedOptionalReference::splat(Some(material)), update_mask.cast())
+        
+        // for i in 0..N {
+        //     if update_mask.test(i) {
+        //         self.materials[i] = Some(material);
+        //     }
+        // }
+
+    }
+
+    pub fn finalize(&mut self, rays: &PackedRays<N>) {
+        self.normals = self.normals.unit_vector();
+        self.locations = rays.at_t(self.t);
+        self.front_face = rays.directions().dot(&self.normals).simd_lt(Simd::splat(0.0));
+        self.normals.assign_masked(&-self.normals, !self.front_face);
+    }
+
+    pub fn at(&self, index: usize) -> Option<HitRecord<'a>> {
+        if self.hits.test(index) {
+            Some(HitRecord {
+                location: self.locations.at(index),
+                normal: self.normals.at(index),
+                t: self.t[index],
+                front_face: self.front_face.test(index),
+                material: self.materials.at(index).unwrap(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn locations(&self) -> PackedPoint3<N> {
+        self.locations
+    }
+
+    pub fn normals(&self) -> PackedVec3<N> {
+        self.normals
+    }
+
+    pub fn t(&self) -> Simd<f64, N> {
+        self.t
+    }
+
+    pub fn hits(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
+        self.hits
+    }
+
+    pub fn front_face(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
+        self.front_face
+    }
+
+    // pub fn material(&self) -> &[Option<&'a Arc<dyn Material>>; N] {
+    //     &self.materials
+    // }
 }
 
 #[derive(Clone)]
@@ -109,10 +213,7 @@ impl Sphere {
         Sphere { center: center, radius: radius, material: material.clone()}
     }
     
-}
-
-impl Hittable for Sphere {
-    fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
+    pub fn hit(&self, ray: &Ray, t_range: &std::ops::Range<f64>) -> Option<HitRecord> {
         let center_offset = ray.origin() - self.center;
 
         let a = ray.direction().length_squared();
@@ -144,10 +245,51 @@ impl Hittable for Sphere {
         ))
 
     }
+    
+    pub fn hit_packed<'a, const N: usize>(&'a self, rays: &PackedRays<N>, t_range: &std::ops::Range<f64>, hit_records: &mut PackedHitRecords<'a, N>) 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        let center_offset = rays.origins() - self.center;
+        let a = rays.directions().length_squared();
+        let inverse_a = Simd::splat(1.0) / a;
+        let half_b = center_offset.dot(&rays.directions());
+        let c = center_offset.length_squared() - Simd::splat(self.radius.powi(2));
+        let discriminant = half_b.mul_add(half_b, -a * c);
 
-    fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized {
-        println!("===================================");
-        println!("{}", table);
+        let discriminant_positive = discriminant.simd_ge(Simd::splat(0.0)) & rays.enabled();
+
+        if discriminant_positive.any() {
+            let neg_half_b = negate_simd_float(half_b);
+            let sqrt_discriminant = discriminant.sqrt();
+            // let mut root = (neg_half_b - sqrt_discriminant) * inverse_a;
+            // let mut root_valid = (simd_inside(&root, t_range)) & discriminant_positive;
+
+            // masked_assign(&mut root, (neg_half_b + sqrt_discriminant) * inverse_a, !root_valid);
+            // root_valid = simd_inside(&root, t_range) & discriminant_positive;
+
+            let root1 = (neg_half_b - sqrt_discriminant) * inverse_a;
+            let root2 = (neg_half_b + sqrt_discriminant) * inverse_a;
+            let root1_valid = simd_inside(&root1, t_range);
+            let root2_valid = simd_inside(&root1, t_range);
+
+            let root = masked_select(root2, root1, root1_valid);
+
+            let valid = (root1_valid | root2_valid)& rays.enabled();
+
+            let locations = rays.at_t(root);
+            let normal = locations - self.center;
+            
+            hit_records.update(
+                rays, 
+                &normal,
+                &root, 
+                &valid, 
+                &self.material
+            )
+        }
+    }
+
+    pub fn from_table(table: &toml::Table, material_table: &HashMap<String, Arc<dyn Material>>) -> Self where Self: Sized {
         let center = Point3::from_toml(&table["center"]).unwrap();
         let radius = to_float(&table["radius"]).unwrap();
         let material_name = table["material"].as_str().unwrap();

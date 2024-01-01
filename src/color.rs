@@ -1,5 +1,8 @@
 use crate::toml_utils::to_float;
 
+use std::simd::{Simd, Mask, LaneCount, SupportedLaneCount, cmp::SimdPartialOrd, SimdElement};
+use crate::simd_util::masked_assign;
+
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct Color {
@@ -49,6 +52,9 @@ impl Color {
     // }
 
     pub fn to_u8_array(&self) -> [u8; 3]{
+        assert!(self.red <= 2.0, "red should be less than 1.0, but got {}", self.red);
+        assert!(self.green <= 2.0, "green should be less than 1.0, but got {}", self.green);
+        assert!(self.blue <= 2.0, "blue should be less than 1.0, but got {}", self.blue);
         let scale_factor = 255.999;
         let ir = (self.red.sqrt() * scale_factor) as u8;
         let ig = (self.green.sqrt() * scale_factor) as u8;
@@ -121,6 +127,8 @@ impl Color {
 
 impl std::ops::Mul<Color> for Color {
     type Output = Color;
+
+    #[inline]
     fn mul(self, rhs: Color) -> Self::Output {
         Color{
             red: self.red * rhs.red,
@@ -130,9 +138,159 @@ impl std::ops::Mul<Color> for Color {
     }
 }
 
+impl std::ops::Mul<f64> for Color {
+    type Output = Color;
+
+    #[inline]
+    fn mul(self, rhs: f64) -> Self::Output {
+        Color{
+            red: self.red * rhs,
+            green: self.green * rhs,
+            blue: self.blue * rhs,
+        }
+    }
+}
+
+impl std::ops::Div<f64> for Color {
+    type Output = Color;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self::Output {
+        Color{
+            red: self.red / rhs,
+            green: self.green / rhs,
+            blue: self.blue / rhs,
+        }
+    }
+}
+
 
 impl std::fmt::Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({:.2}, {:.2}, {:.2})", self.red, self.green, self.blue)
+    }
+}
+
+#[derive(Debug)]
+#[derive(Copy, Clone)]
+pub struct PackedColor<const N: usize> 
+where LaneCount<N>: SupportedLaneCount
+{
+    red: Simd<f64, N>,
+    green: Simd<f64, N>,
+    blue: Simd<f64, N>
+}
+
+impl <const N: usize> PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    #[inline]
+    pub fn broadcast_scaler(color: Color) -> PackedColor<N> {
+        Self::splat(color)
+    }
+
+    #[inline]
+    pub fn splat(color: Color) -> PackedColor<N> {
+        PackedColor {
+            red: Simd::splat(color.red),
+            green: Simd::splat(color.green),
+            blue: Simd::splat(color.blue),
+        }
+    }
+
+    #[inline]
+    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: Mask<<f64 as SimdElement>::Mask, N>) {
+        
+        masked_assign(&mut self.red, colors.red, mask);
+        masked_assign(&mut self.green, colors.green, mask);
+        masked_assign(&mut self.blue, colors.blue, mask);
+    }
+
+    #[inline]
+    pub fn at(&self, index: usize) -> Color {
+        Color {
+            red: self.red[index],
+            green: self.green[index],
+            blue: self.blue[index]
+        }
+    }
+
+    #[inline]
+    pub fn update(&mut self, value: Color, index: usize) {
+        self.red[index] = value.red;
+        self.green[index] = value.green;
+        self.blue[index] = value.blue;
+    }
+
+    #[inline]
+    pub fn sum(&self) -> Color {
+        Color {
+            red: self.red.as_array().iter().sum(),
+            green: self.green.as_array().iter().sum(),
+            blue: self.blue.as_array().iter().sum()
+        }
+    }
+
+    #[inline]
+    pub fn check(&self) {
+        assert!((self.red.simd_lt(Simd::splat(1.01))).all(), "RED Expect <= 1.0, got{:?}", self.red);
+        assert!((self.green.simd_lt(Simd::splat(1.01))).all(), "GREEN Expect <= 1.0, got{:?}", self.green);
+        assert!((self.blue.simd_lt(Simd::splat(1.01))).all(), "BLUE Expect <= 1.0, got{:?}", self.blue);
+    }
+}
+
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self.red * rhs.red,
+            green: self.green * rhs.green,
+            blue: self.blue * rhs.blue,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Mul<Simd<f64, N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: Simd<f64, N>) -> Self::Output {
+        PackedColor{
+            red: self.red * rhs,
+            green: self.green * rhs,
+            blue: self.blue * rhs,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for Simd<f64, N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    type Output = PackedColor<N>;
+    #[inline]
+    fn mul(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self * rhs.red,
+            green: self * rhs.green,
+            blue: self * rhs.blue,
+        }
+    }
+}
+
+impl <const N: usize> std::ops::Add<PackedColor<N>> for PackedColor<N> 
+where LaneCount<N>: SupportedLaneCount
+{
+    type Output = PackedColor<N>;
+    #[inline]
+    fn add(self, rhs: PackedColor<N>) -> Self::Output {
+        PackedColor{
+            red: self.red + rhs.red,
+            green: self.green + rhs.green,
+            blue: self.blue + rhs.blue,
+        }
     }
 }
