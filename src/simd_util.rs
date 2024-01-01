@@ -13,10 +13,15 @@ where
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(
+        all(
+            any(target_arch = "x86", target_arch = "x86_64"),
+            target_feature = "avx512f"
+        )
+    )]
     {   
         // AVX512 Doubles
-        if size_of::<T>() == 8 && N * size_of::<T>() >= 64 && is_x86_feature_detected!("avx512f") {
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 64 {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
@@ -39,9 +44,18 @@ where
                 return result.assume_init()
             }
         }
+    }
 
+    #[cfg(
+        all(
+            any(target_arch = "x86", target_arch = "x86_64"),
+            target_feature = "avx",
+            not(target_feature = "avx512f")
+        )
+    )]
+    {
         // AVX2 Singles
-        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
+        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f32 = std::mem::transmute(result.as_mut_ptr());
@@ -63,7 +77,7 @@ where
         }
 
         // AVX2 Doubles
-        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
@@ -208,9 +222,15 @@ where
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(
+        all(
+            any(target_arch = "x86", target_arch = "x86_64"),
+            target_feature = "avx",
+            not(target_feature = "avx512f")
+        )
+    )]
     {
-        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f"){
+        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f32 = std::mem::transmute(result.as_mut_ptr());
@@ -227,7 +247,7 @@ where
             }
         }
 
-        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
