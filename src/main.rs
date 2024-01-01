@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![feature(stdsimd)]
 
 mod geometry;
 mod color;
@@ -240,7 +241,7 @@ fn load_camera(table: &toml::value::Table) -> Option<(f64, f64, Vec3, Vec3, Vec3
     };
 
 
-    let defocus_angle = match camera_toml_table.get("fov") {
+    let defocus_angle = match camera_toml_table.get("defocus_angle") {
         Some(f) => to_float(f).unwrap(),
         None => 0.0,
     };

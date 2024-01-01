@@ -15,15 +15,40 @@ where
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {   
+        // AVX512 Doubles
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 64 && is_x86_feature_detected!("avx512f") {
+            let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
+            unsafe {
+                let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
+                // let mask_ptr: *const f64 = std::mem::transmute(mask.to_int().as_array().as_ptr());
+                let mask_bits = mask.to_bitmask_vector();
+                let base_ptr: *const f64 = std::mem::transmute(base.as_array().as_ptr());
+                let other_ptr: *const f64 = std::mem::transmute(other.as_array().as_ptr());
+                for i in 0..(N * size_of::<T>() / 64) {
+                    let mask_mm: __mmask8 = mask_bits[i];
+                    let base_mm = _mm512_load_pd(base_ptr.wrapping_add((64 / 8) * i));
+                    let other_mm = _mm512_load_pd(other_ptr.wrapping_add((64 / 8) * i));
+
+                    let result_mm = _mm512_mask_blend_pd(mask_mm, base_mm, other_mm);
+                    // let base_masked_mm = _mm256_andnot_pd(mask_mm, base_mm);
+                    // let other_masked_mm = _mm256_and_pd(mask_mm, other_mm);
+                    // let result_mm = _mm256_or_pd(base_masked_mm, other_masked_mm);
+
+                    _mm512_store_pd(result_ptr.wrapping_add((64 / 8) * i), result_mm);
+                }
+                return result.assume_init()
+            }
+        }
+
         // AVX2 Singles
-        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
+        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f32 = std::mem::transmute(result.as_mut_ptr());
                 let mask_ptr: *const f32 = std::mem::transmute(mask.to_int().as_array().as_ptr());
                 let base_ptr: *const f32 = std::mem::transmute(base.as_array().as_ptr());
                 let other_ptr: *const f32 = std::mem::transmute(other.as_array().as_ptr());
-                for i in 0..(32 / N / size_of::<T>()) {
+                for i in 0..(N * size_of::<T>() / 32) {
                     let mask_mm = _mm256_load_ps(mask_ptr.wrapping_add((32 / 4) * i));
                     let base_mm = _mm256_load_ps(base_ptr.wrapping_add((32 / 4) * i));
                     let other_mm = _mm256_load_ps(other_ptr.wrapping_add((32 / 4) * i));
@@ -38,14 +63,14 @@ where
         }
 
         // AVX2 Doubles
-        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
                 let mask_ptr: *const f64 = std::mem::transmute(mask.to_int().as_array().as_ptr());
                 let base_ptr: *const f64 = std::mem::transmute(base.as_array().as_ptr());
                 let other_ptr: *const f64 = std::mem::transmute(other.as_array().as_ptr());
-                for i in 0..(32 / N / size_of::<T>()) {
+                for i in 0..(N * size_of::<T>() / 32) {
                     let mask_mm = _mm256_load_pd(mask_ptr.wrapping_add((32 / 8) * i));
                     let base_mm = _mm256_load_pd(base_ptr.wrapping_add((32 / 8) * i));
                     let other_mm = _mm256_load_pd(other_ptr.wrapping_add((32 / 8) * i));
@@ -185,12 +210,12 @@ where
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
+        if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f"){
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f32 = std::mem::transmute(result.as_mut_ptr());
                 let input_ptr: *const f32 = std::mem::transmute(value.as_array().as_ptr());
-                for i in 0..(32 / N / size_of::<T>()) {
+                for i in 0..(N * size_of::<T>() / 32) {
                     let input_mm = _mm256_load_ps(input_ptr.wrapping_add((32 / 4) * i));
                     let invert_mask_mm = _mm256_broadcast_ss(std::mem::transmute(&0x8000_0000u32));
 
@@ -202,12 +227,12 @@ where
             }
         }
 
-        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
+        if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") && !is_x86_feature_detected!("avx512f") {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
                 let result_ptr: *mut f64 = std::mem::transmute(result.as_mut_ptr());
                 let input_ptr: *const f64 = std::mem::transmute(value.as_array().as_ptr());
-                for i in 0..(32 / N / size_of::<T>()) {
+                for i in 0..(N * size_of::<T>() / 32) {
                     let input_mm = _mm256_load_pd(input_ptr.wrapping_add((32 / 8) * i));
                     let invert_mask_mm = _mm256_broadcast_sd(std::mem::transmute(&0x8000_0000_0000_0000u64));
 
