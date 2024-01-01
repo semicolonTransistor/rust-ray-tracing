@@ -14,7 +14,8 @@ where
     use std::arch::x86_64::*;
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
+    {   
+        // AVX2 Singles
         if size_of::<T>() == 4 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {
@@ -36,6 +37,7 @@ where
             }
         }
 
+        // AVX2 Doubles
         if size_of::<T>() == 8 && N * size_of::<T>() >= 32 && is_x86_feature_detected!("avx2") {
             let mut result: MaybeUninit<Simd<T,N>> = MaybeUninit::uninit();
             unsafe {

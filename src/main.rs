@@ -11,12 +11,14 @@ mod toml_utils;
 mod ray;
 mod simd_util;
 
+use clap::{Parser, ValueEnum};
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
-use std::{sync::Arc, num::NonZeroUsize, path::Path, fs::File, io::Read};
+use std::{sync::Arc, num::NonZeroUsize, path::{Path, PathBuf}, fs::File, io::Read, env::consts::ARCH};
 use renderer::TileRenderer;
+use crate::toml_utils::to_float;
 
-use crate::{materials::get_materials, objects::get_object_list};
+use crate::{materials::get_materials, objects::get_object_list, renderer::TileRenderMode};
 
 fn read_file_into_string (path: &Path) -> std::io::Result<String> {
     let mut file_content = String::new();
@@ -24,11 +26,73 @@ fn read_file_into_string (path: &Path) -> std::io::Result<String> {
     Ok(file_content)
 }
 
+#[derive(Parser)]
+#[command(name = "Ray Tracer")]
+#[command(author = "Jinyu Liu <liu.jinyu@psu.edu>")]
+#[command(about = "Multithreaded ray tracing implementation based on \"Ray Tracing in One Weekend\"")]
+struct Cli{
+    
+    /// Scene file location
+    #[arg(short, long, value_name = "FILE")]
+    scene: PathBuf,
+
+    /// Camera parameters, if not specified the parameters will be loaded from scene file instead.
+    #[arg(short, long, value_name = "FILE")]
+    camera: Option<PathBuf>,
+
+    /// Image Width
+    #[arg(short, long, value_name = "PIXELS", default_value="3840", value_parser= clap::value_parser!(u64).range(1..))]
+    width: u64,
+
+    /// Image Height
+    #[arg(short, long, value_name = "PIXELS", default_value="2160", value_parser= clap::value_parser!(u64).range(1..)) ]
+    height: u64,
+
+    /// Output image location
+    #[arg(short, long, value_name = "FILE", default_value="output.png")]
+    output_image: PathBuf,
+
+
+    /// Renderer mode
+    #[arg(short, long, value_enum, value_name = "Mode", default_value="vectorized")]
+    render_mode: RendererMode,
+
+    /// The size of tiles, sets the size tasks assign to threads when rendering.
+    #[arg(short, long, default_value="128", value_parser= clap::value_parser!(u64).range(1..1024))]
+    tile_size: u64,
+
+    /// Number of samples to take for each pixel. Higher value increase anti-aliasing quality but decreases performance.
+    #[arg(short, long, default_value="100", value_parser= clap::value_parser!(u64).range(1..1024))]
+    samples_per_pixel: u64,
+
+    /// Max number of bounces to calculate per ray. Higher value increase anti-aliasing quality but decreases performance.
+    #[arg(short, long, default_value="50", value_parser= clap::value_parser!(u64).range(1..))]
+    bounces: u64,
+
+    /// Number of threads to use, default to the number of logical processors if not specified
+    #[arg(short, long, value_parser= clap::value_parser!(u64).range(1..))]
+    thread_count: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+#[derive(Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(ValueEnum)]
+enum RendererMode {
+    // scaler version
+    Scaler,
+
+    // SIMD version
+    Vectorized,
+}
+
 fn main() -> image::ImageResult<()> {
+
+    let cli_arguments = Cli::parse();
 
     let path = Path::new("scene.toml");
 
-    let scene_config_content = match read_file_into_string(path) {
+    let scene_config_content = match read_file_into_string(&cli_arguments.scene) {
         Ok(c) => c,
         Err(why) => panic!("Can't read scene from file {}: {}", path.display(), why),
     };
@@ -38,32 +102,68 @@ fn main() -> image::ImageResult<()> {
         Err(why) => panic!("Failed parsing scene from file {}: {}", path.display(), why),
     };
 
-    let materials = get_materials(scene_data["materials"].as_table().unwrap());
+    let scene = load_scene(&scene_data);
 
-    let scene = Arc::new(Scene::from_list(&get_object_list(scene_data["hitables"].as_array().unwrap(), &materials)));
-
-    let image_width = 3840;
-    let image_height = 2160;
+    let image_width = cli_arguments.width.try_into().unwrap();
+    let image_height = cli_arguments.height.try_into().unwrap();
     // let image_width = 1280;
     // let image_height = 720;
     // let max_pixel_value = 256;
 
+    // get camera
+    let (focal_length, fov, center, look_at, up, defocus_angle) = match cli_arguments.camera {
+        Some(camera_file_path) => {
+            let camera_config_content = match read_file_into_string(&camera_file_path) {
+                Ok(c) => c,
+                Err(why) => panic!("Can't read camera from file {}: {}", path.display(), why),
+            };
+
+            let camera_data = match toml::from_str::<toml::Table>(&camera_config_content) {
+                Ok(t) => t,
+                Err(why) => panic!("Failed parsing camera from file {}: {}", path.display(), why),
+            };
+
+            match load_camera(&camera_data) {
+                Some(v) => v,
+                None => panic!("Camera file don't contain a valid camera!"),
+            }
+        
+        },
+        None => match load_camera(&scene_data) {
+            Some(v) => v,
+            None => panic!("No camera file provided and scene file didn't contain a valid camera"),
+        },
+    };
+
     let camera = Arc::new(Camera::new(
         image_width, image_height,
-        10.0, 30.0, 
-        Vec3::new(16.0, 2.0, 18.5),
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
-        0.0
+        focal_length, fov, 
+        center, look_at, up, defocus_angle
     ));
 
     println!("\t Number of objects: \t {}", scene.len());
 
-    let renderer = TileRenderer::new(None, NonZeroUsize::new(128).unwrap());
+    let render_mode = match cli_arguments.render_mode {
+        RendererMode::Scaler => TileRenderMode::Scaler,
+        RendererMode::Vectorized => TileRenderMode::Vectorized,
+    };
+    let renderer = TileRenderer::new(
+        match cli_arguments.thread_count {
+            Some(tc) => Some(NonZeroUsize::new(tc.try_into().unwrap()).unwrap()),
+            None => None,
+        }, 
+        NonZeroUsize::new(cli_arguments.tile_size.try_into().unwrap()).unwrap(), 
+        render_mode
+    );
 
-    let (render_result, render_stat) = renderer.render(50, 100,  &scene, &camera);
+    let (render_result, render_stat) = renderer.render(
+        cli_arguments.bounces.try_into().unwrap(), 
+        cli_arguments.samples_per_pixel.try_into().unwrap(),  
+        &scene, 
+        &camera
+    );
 
-    render_result.save("output.png")?;
+    render_result.save(cli_arguments.output_image)?;
 
     println!("Image Size: {} x {}", camera.image_width(), camera.image_height());
     println!("Total Pixels: {}", render_stat.pixels_rendered());
@@ -71,4 +171,79 @@ fn main() -> image::ImageResult<()> {
     println!("Average Pixel Rate: {:.2} px/s", render_stat.pixels_per_second());
 
     Ok(())
+}
+
+fn load_scene(table: &toml::value::Table) -> Arc<Scene>{
+    let material_toml_table = match table["materials"].as_table() {
+        Some(t) => t,
+        None => panic!("Can't find materials table!"),
+    };
+
+    let materials_table = get_materials(material_toml_table);
+
+    let objects_toml_array = match table.get("objects") {
+        Some(a) => a.as_array().unwrap(),
+        None => match table.get("hitables") {
+            Some(a) => a.as_array().unwrap(),
+            None => panic!("Can't find the objects array")
+        },
+    };
+
+    let objects = get_object_list(objects_toml_array, &materials_table);
+
+    Arc::new(
+        Scene::from_list(&objects)
+    )
+}
+
+fn load_camera(table: &toml::value::Table) -> Option<(f64, f64, Vec3, Vec3, Vec3, f64)> {
+    let camera_toml_table = match table.get("camera") {
+        Some(t) => t.as_table().unwrap(),
+        None => return None,
+    };
+
+    let focal_length = match camera_toml_table.get("focal_length") {
+        Some(f) => to_float(f).unwrap(),
+        None => 10.0,
+    };
+
+    let fov = match camera_toml_table.get("fov") {
+        Some(f) => to_float(f).unwrap(),
+        None => 30.0,
+    };
+
+    let center = match camera_toml_table.get("center") {
+        Some(v) => Vec3::from_toml(v).unwrap(),
+        None => match camera_toml_table.get("look_from") {
+            Some(v) => Vec3::from_toml(v).unwrap(),
+            None => match camera_toml_table.get("lookFrom") {
+                Some(v) => Vec3::from_toml(v).unwrap(),
+                None => panic!("Can't find camera center"),
+            },
+        },
+    };
+
+    let look_at = match camera_toml_table.get("look_at") {
+        Some(v) => Vec3::from_toml(v).unwrap(),
+        None => match camera_toml_table.get("lookAt") {
+            Some(v) => Vec3::from_toml(v).unwrap(),
+            None => panic!("Can't find look_at"),
+        },
+    };
+
+    let up = match camera_toml_table.get("up") {
+        Some(v) => Vec3::from_toml(v).unwrap(),
+        None => match camera_toml_table.get("lookUp") {
+            Some(v) => Vec3::from_toml(v).unwrap(),
+            None => panic!("Can't find up"),
+        },
+    };
+
+
+    let defocus_angle = match camera_toml_table.get("fov") {
+        Some(f) => to_float(f).unwrap(),
+        None => 0.0,
+    };
+
+    Some((focal_length, fov, center, look_at, up, defocus_angle))
 }

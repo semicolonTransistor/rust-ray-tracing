@@ -1,8 +1,9 @@
 use crate::ray_tracing::{Scene, Camera};
-use crate::ray::{Ray, PackedRays};
 use crate::color::{Color, PackedColor};
 use image::{Rgb, RgbImage};
+use crate::ray::PackedRays;
 use std::num::NonZeroUsize;
+use std::simd::{LaneCount, SupportedLaneCount};
 use itertools::Itertools;
 use std::sync::Arc;
 use console::Term;
@@ -34,14 +35,27 @@ impl RenderStat {
 }
 
 
-
 pub trait Renderer {
     fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> (RgbImage, RenderStat);
 }
 
+
+#[derive(Debug)]
+#[derive(Clone, Copy)]
+pub enum TileRenderMode{
+    Scaler,
+    Vectorized,
+    VectorizedVariant1,
+    VectorizedVariant2,
+    VectorizedVariant3
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
 pub struct TileRenderer {
     num_threads: NonZeroUsize,
     block_size: NonZeroUsize,
+    mode: TileRenderMode,
 }
 
 #[derive(Debug)]
@@ -63,6 +77,7 @@ struct TileRenderResult {
     average_pixel_throughput: f64,
     output: Vec<Rgb<u8>>   
 }
+
 
 impl TileRenderTask {
     fn render(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
@@ -99,8 +114,22 @@ impl TileRenderTask {
         }
     }
 
-    fn render_vectorized(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 4;
+    fn render_vectorized (&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {   
+            // AVX512
+            if is_x86_feature_detected!("avx512f") {
+                return self.render_vectorized_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+            }
+        }
+
+        // assume 256 bit otherwise
+        return self.render_vectorized_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+    }
+    
+    fn render_vectorized_impl <const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult 
+    where LaneCount<N>: SupportedLaneCount
+    {
         let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
 
         let col_offset = self.block_index_x * self.block_size;
@@ -139,7 +168,22 @@ impl TileRenderTask {
     }
 
     fn render_vectorized2(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 4;
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {   
+            // AVX512
+            if is_x86_feature_detected!("avx512f") {
+                return self.render_vectorized2_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+            }
+        }
+
+        // assume 256 bit otherwise
+        return self.render_vectorized2_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+    }
+
+    fn render_vectorized2_impl<const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult 
+    where LaneCount<N>: SupportedLaneCount
+    {
+        
         let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
 
         let col_offset = self.block_index_x * self.block_size;
@@ -176,7 +220,23 @@ impl TileRenderTask {
     }
 
     fn render_vectorized3(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        const N:usize = 4;
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {   
+            // AVX512
+            if is_x86_feature_detected!("avx512f") {
+                return self.render_vectorized3_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+            }
+        }
+
+        // assume 256 bit otherwise
+        return self.render_vectorized3_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+    }
+
+    fn render_vectorized3_impl<const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult
+    where
+        LaneCount<N>: SupportedLaneCount 
+    {
+
         let mut result = vec![Rgb::<u8>([0, 0, 0]); self.block_size.pow(2)];
 
         let col_offset = self.block_index_x * self.block_size;
@@ -229,20 +289,20 @@ enum TileRenderUpdates {
 }
 
 impl TileRenderer {
-    pub fn new(num_threads: Option<NonZeroUsize>, block_size: NonZeroUsize) -> Box<dyn Renderer> {
+    pub fn new(num_threads: Option<NonZeroUsize>, block_size: NonZeroUsize, mode: TileRenderMode) -> Box<dyn Renderer> {
         Box::new(TileRenderer {
             num_threads: match num_threads {
                 Some(n) => n,
                 None => std::thread::available_parallelism().unwrap(),
             },
-            block_size
+            block_size,
+            mode
         })
     }
 }
 
 impl Renderer for TileRenderer {
     fn render(&self, max_bounces: usize, samples_per_pixel: usize, scene: &Arc<Scene>, camera: &Arc<Camera>) -> (RgbImage, RenderStat) {
-
         let start = std::time::Instant::now();
         // divide image into blocks
         let width_in_blocks = (camera.image_width() + self.block_size.get() - 1) / self.block_size.get();
@@ -274,6 +334,7 @@ impl Renderer for TileRenderer {
             let thread_update_tx = update_tx.clone();
             let thread_camera = camera.clone();
             let thread_scene = scene.clone();
+            let thread_mode = self.mode;
 
             std::thread::spawn(move || {
                 loop {
@@ -287,7 +348,13 @@ impl Renderer for TileRenderer {
                         block_index_y: task.block_index_y,
                     })).unwrap();
 
-                    let result = task.render_vectorized2(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id);
+                    let result = match thread_mode {
+                        TileRenderMode::Scaler => task.render(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id),
+                        TileRenderMode::Vectorized => task.render_vectorized2(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id),
+                        TileRenderMode::VectorizedVariant1 => task.render_vectorized(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id),
+                        TileRenderMode::VectorizedVariant2 => task.render_vectorized2(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id),
+                        TileRenderMode::VectorizedVariant3 => task.render_vectorized3(&thread_camera, &thread_scene, max_bounces, samples_per_pixel, thread_id),
+                    };
 
                     thread_update_tx.send(TileRenderUpdates::End(result)).unwrap();
 

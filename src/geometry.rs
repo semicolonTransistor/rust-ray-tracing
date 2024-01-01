@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use crate::toml_utils::to_float;
 use array_macro::array;
-use std::{simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement}, ops::Mul};
+use std::simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement};
 use crate::simd_util::masked_assign;
 
 #[derive(Debug)]
