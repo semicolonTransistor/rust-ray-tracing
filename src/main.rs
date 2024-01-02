@@ -16,7 +16,7 @@ mod simd_util;
 use clap::{Parser, ValueEnum};
 use geometry::Vec3;
 use ray_tracing::{Camera, Scene};
-use std::{sync::Arc, num::NonZeroUsize, path::{Path, PathBuf}, fs::File, io::Read, env::consts::ARCH};
+use std::{sync::Arc, num::NonZeroUsize, path::{Path, PathBuf}, fs::File, io::Read};
 use renderer::TileRenderer;
 use crate::toml_utils::to_float;
 use crate::real::{Real, duration_as_secs_real};
@@ -42,6 +42,10 @@ struct Cli{
     /// Camera parameters, if not specified the parameters will be loaded from scene file instead.
     #[arg(short, long, value_name = "FILE")]
     camera: Option<PathBuf>,
+
+    /// Report file, specify to write render stats to a file
+    #[arg(short, long, value_name = "FILE")]
+    report: Option<PathBuf>,
 
     /// Image Width
     #[arg(short, long, value_name = "PIXELS", default_value="3840", value_parser= clap::value_parser!(u64).range(1..))]
@@ -109,9 +113,6 @@ fn main() -> image::ImageResult<()> {
 
     let image_width = cli_arguments.width.try_into().unwrap();
     let image_height = cli_arguments.height.try_into().unwrap();
-    // let image_width = 1280;
-    // let image_height = 720;
-    // let max_pixel_value = 256;
 
     // get camera
     let (focal_length, fov, center, look_at, up, defocus_angle) = match cli_arguments.camera {
@@ -172,6 +173,28 @@ fn main() -> image::ImageResult<()> {
     println!("Total Pixels: {}", render_stat.pixels_rendered());
     println!("Time Taken: {:.3} seconds", duration_as_secs_real(&render_stat.duration()));
     println!("Average Pixel Rate: {:.2} px/s", render_stat.pixels_per_second());
+
+    match cli_arguments.report {
+        Some(report_path) => {
+            let mut report = toml::value::Table::new();
+            report.insert("image_size".to_owned(), toml::Value::try_from([camera.image_width(), camera.image_height()]).unwrap());
+            report.insert("total_pixels".to_owned(), toml::Value::Integer(render_stat.pixels_rendered() as i64));
+            report.insert("time_taken".to_owned(), toml::Value::Float(render_stat.duration().as_secs_f64()));
+            report.insert("average_pixel_rate".to_owned(), toml::Value::Float(render_stat.pixels_per_second() as f64));
+
+            match render_stat.detailed_stat() {
+                Some(stat) => {
+                    report.insert("renderer_detailed_stat".to_owned(), toml::Value::Table(stat.clone()));
+                },
+                None => todo!(),
+            }
+
+            let serialized_report = toml::to_string(&report).unwrap();
+
+            std::fs::write(report_path, serialized_report)?;
+        },
+        None => (),
+    };
 
     Ok(())
 }

@@ -8,3 +8,12 @@
 !cargo.toml
 !rust-toolchain.toml
 r*/**
+
+# python venv
+.venv/**
+
+# config files
+config_json/**
+config_toml/**
+
+nohup.out

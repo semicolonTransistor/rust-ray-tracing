@@ -1,5 +1,6 @@
 use crate::ray_tracing::{Scene, Camera};
 use crate::color::{Color, PackedColor};
+use image::imageops::tile;
 use image::{Rgb, RgbImage};
 use crate::ray::PackedRays;
 use std::mem::size_of;
@@ -34,6 +35,10 @@ impl RenderStat {
 
     pub fn pixels_per_second(&self) -> Real {
         self.pixels_per_second
+    }
+
+    pub fn detailed_stat(&self) -> Option<&toml::value::Table> {
+        self.detailed_stat.as_ref()
     }
 }
 
@@ -454,6 +459,24 @@ impl Renderer for TileRenderer {
         writeln!(term, "Rendering Completed!").unwrap_or_default();
         term.flush().unwrap_or_default();
 
+        // create detailed stat
+        let mut tile_array = toml::value::Array::new();
+
+        for i in 0..height_in_blocks {
+            for j in 0..width_in_blocks {
+                let mut tile_result = toml::value::Table::new();
+                tile_result.insert("tile_index".to_owned(), toml::Value::try_from([i, j]).unwrap());
+                tile_result.insert("average_pixel_throughput".to_owned(), toml::Value::try_from(results[j + i * width_in_blocks].average_pixel_throughput).unwrap());
+                tile_array.push(toml::Value::Table(tile_result));
+            }
+        }
+
+        let mut detailed_table = toml::Table::new();
+
+        detailed_table.insert("tiles".to_owned(), toml::Value::Array(tile_array));
+
+
+
         (
             RgbImage::from_fn(camera.image_width().try_into().unwrap(), camera.image_height().try_into().unwrap(), |col, row| {
                 let block_index_x = (col as usize) / self.block_size;
@@ -463,7 +486,7 @@ impl Renderer for TileRenderer {
 
                 results[block_index_x + block_index_y * width_in_blocks].output[intra_block_x + intra_block_y * self.block_size.get()]
             }),
-            RenderStat::new(duration, camera.image_height() * camera.image_width(), None)
+            RenderStat::new(duration, camera.image_height() * camera.image_width(), Some(detailed_table))
         )
     }
 }
