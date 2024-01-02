@@ -3,6 +3,8 @@ use crate::{color::Color, objects::Object};
 use crate::objects::{HitRecord, PackedHitRecords, HitResult};
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
 use crate::ray::{Ray, PackedRays};
+use crate::real::Real;
+use crate::toml_utils::to_float;
 
 use std::simd::{LaneCount, SupportedLaneCount, Simd, Mask, SimdElement};
 
@@ -24,8 +26,8 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(image_width: usize, image_height: usize, focal_length: f64, view_angle: f64, center: Point3, look_at: Vec3, up: Vec3, defocus_angle: f64) -> Camera {
-        let aspect_ratio = (image_width as f64) / (image_height as f64);
+    pub fn new(image_width: usize, image_height: usize, focal_length: Real, view_angle: Real, center: Point3, look_at: Vec3, up: Vec3, defocus_angle: Real) -> Camera {
+        let aspect_ratio = (image_width as Real) / (image_height as Real);
         let viewport_height = (view_angle.to_radians() / 2.0).tan() * focal_length * 2.0;
         // let upper_left_diagonal_angle = aspect_ratio.atan();
         // let viewport_height = upper_left_diagonal_angle.cos() * diagonal_length;
@@ -64,12 +66,12 @@ impl Camera {
     pub fn from_toml(table: &toml::Table) -> Camera {
         let image_width: usize = table["image_width"].as_integer().unwrap().try_into().unwrap();
         let image_height: usize = table["image_height"].as_integer().unwrap().try_into().unwrap();
-        let focal_length: f64 = table["focal_length"].as_float().unwrap();
-        let view_angle: f64 = table["view_angle"].as_float().unwrap();
+        let focal_length: Real = to_float(&table["focal_length"]).unwrap();
+        let view_angle: Real = to_float(&table["view_angle"]).unwrap();
         let center = Vec3::from_toml(&table["center"]).unwrap();
         let look_at =  Vec3::from_toml(&table["look_at"]).unwrap();
         let up = Vec3::from_toml(&table["up"]).unwrap();
-        let defocus_angle = table["view_angle"].as_float().unwrap();
+        let defocus_angle = to_float(&table["view_angle"]).unwrap();
 
         Camera::new(image_width, image_height, focal_length, view_angle, center, look_at, up, defocus_angle)
     }
@@ -77,7 +79,7 @@ impl Camera {
     pub fn get_ray(&self, col: usize,  row: usize) -> Ray {
         let x_offset = thread_rng().gen_range(0.0..1.0);
         let y_offset = thread_rng().gen_range(0.0..1.0);
-        let pixel_offset = self.viewport_u * ((col as f64 + x_offset) / (self.image_width as f64)) + self.viewport_v * ((row as f64 + y_offset) / (self.image_height as f64));
+        let pixel_offset = self.viewport_u * ((col as Real + x_offset) / (self.image_width as Real)) + self.viewport_v * ((row as Real + y_offset) / (self.image_height as Real));
         let pixel_center = self.viewport_upper_left_corner + pixel_offset;
         let disk_offset = Vec3::random_in_unit_disk();
         let ray_origin = self.defocus_u * disk_offset.x() + self.defocus_v * disk_offset.y() + self.center;
@@ -228,7 +230,7 @@ impl Scene {
     }
 
     
-    pub fn hit(&self, ray: &Ray, t_range: std::ops::Range<f64>) -> Option<HitRecord> {
+    pub fn hit(&self, ray: &Ray, t_range: std::ops::Range<Real>) -> Option<HitRecord> {
         self.objects.iter().map(|obj| {
             obj.hit(ray, &t_range)
         }).filter_map(|e| e).min_by_key(|h| {ordered_float::OrderedFloat::from(h.t())})
@@ -238,7 +240,7 @@ impl Scene {
         if depth_limit == 0 {
             Color::black()
         } else {
-            match self.hit(ray, 0.001..f64::INFINITY) {
+            match self.hit(ray, 0.001..Real::INFINITY) {
                 Some(hit_record) => {
                     let hit_result = hit_record.hit_result(ray);
                     match hit_result.scattered_ray() {
@@ -274,7 +276,7 @@ impl Scene {
                 
                 match ray_state.ray {
                     Some(ray) => {
-                        match self.hit(&ray, 0.001..f64::INFINITY) {
+                        match self.hit(&ray, 0.001..Real::INFINITY) {
                             Some(hit_record) => {
                                 let hit_result = hit_record.hit_result(&ray);
                                 ray_state.color = ray_state.color * hit_result.attenuation();
@@ -329,7 +331,7 @@ impl Scene {
             let mut hit_records = PackedHitRecords::<N>::default();
 
             for object in &self.objects {
-                object.hit_packed(&rays, &(0.001..f64::INFINITY), &mut hit_records)
+                object.hit_packed(&rays, &(0.001..Real::INFINITY), &mut hit_records)
             }
 
             hit_records.finalize(&rays);
@@ -381,7 +383,14 @@ impl Scene {
     {
         let mut ray_buffers: [Vec<PackedRays<N>>; 2] = [rays.to_vec(), vec![PackedRays::<N>::new(PackedVec3::default(), PackedVec3::default()); rays.len()]];
         let mut color:[Vec<PackedColor<N>>; 2] = array![vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()]; 2];
-        let mut hit_sky: [Vec<Mask<<f64 as SimdElement>::Mask,N>>; 2] = array![vec![Mask::splat(false); rays.len()]; 2];
+
+        // mask out color for lanes that are not enabled
+        for i in 0..rays.len() {
+            color[0][i].assign_masked(PackedColor::splat(Color::black()), !(rays[i].enabled()));
+            color[1][i].assign_masked(PackedColor::splat(Color::black()), !(rays[i].enabled()));
+        }
+
+        let mut hit_sky: [Vec<Mask<<Real as SimdElement>::Mask,N>>; 2] = array![vec![Mask::splat(false); rays.len()]; 2];
 
         let mut last_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -397,7 +406,7 @@ impl Scene {
                 let mut hit_records = PackedHitRecords::<N>::default();
 
                 for object in &self.objects {
-                    object.hit_packed(&ray_buffers[selector][j], &(0.001..f64::INFINITY), &mut hit_records)
+                    object.hit_packed(&ray_buffers[selector][j], &(0.001..Real::INFINITY), &mut hit_records)
                 }
 
                 hit_records.finalize(&ray_buffers[selector][j]);
@@ -513,7 +522,11 @@ impl Scene {
     where LaneCount<N>: SupportedLaneCount
     {
         let mut color = vec![PackedColor::<N>::broadcast_scaler(Color::white()); rays.len()];
-        let mut hit_sky:Vec<Mask<<f64 as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
+        let mut hit_sky:Vec<Mask<<Real as SimdElement>::Mask, N>> = vec![Mask::splat(false); rays.len()];
+
+        for i in 0..rays.len() {
+            color[i].assign_masked(PackedColor::splat(Color::black()), !(rays[i].enabled()));
+        }
 
         let mut num_active_chunk = rays.len(); // set to one above the last active chunk
 
@@ -527,7 +540,7 @@ impl Scene {
                 let mut hit_records = PackedHitRecords::<N>::default();
 
                 for object in &self.objects {
-                    object.hit_packed(&rays[j], &(0.001..f64::INFINITY), &mut hit_records)
+                    object.hit_packed(&rays[j], &(0.001..Real::INFINITY), &mut hit_records)
                 }
 
                 hit_records.finalize(&rays[j]);

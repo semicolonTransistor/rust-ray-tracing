@@ -1,6 +1,7 @@
 use std::simd::{LaneCount, SupportedLaneCount, Mask, Simd, SimdElement};
 
 use crate::geometry::{Vec3, Point3, PackedVec3, PackedPoint3};
+use crate::real::Real;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -25,7 +26,7 @@ impl Ray {
         self.direction
     }
 
-    pub fn at(&self, t: f64) -> Point3 {
+    pub fn at(&self, t: Real) -> Point3 {
         self.origin + self.direction * t
     }
 
@@ -39,7 +40,7 @@ where
 {
     origins: PackedPoint3<N>,
     directions: PackedVec3<N>,
-    enabled: Mask<<f64 as SimdElement>::Mask, N>
+    enabled: Mask<<Real as SimdElement>::Mask, N>
 }
 
 impl <const N: usize> PackedRays<N> 
@@ -55,7 +56,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 
     #[inline]
-    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: Mask<<f64 as SimdElement>::Mask, N>) -> PackedRays<N> {
+    pub fn new_with_enable(origins: PackedPoint3<N>, directions: PackedVec3<N>, enabled: Mask<<Real as SimdElement>::Mask, N>) -> PackedRays<N> {
         PackedRays { origins, directions, enabled }
     }
 
@@ -70,7 +71,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 
     #[inline]
-    pub fn enabled(&self) -> Mask<<f64 as SimdElement>::Mask, N> {
+    pub fn enabled(&self) -> Mask<<Real as SimdElement>::Mask, N> {
         self.enabled
     }
 
@@ -99,7 +100,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 
     #[inline]
-    pub fn at_t(&self, t: Simd<f64, N>) -> PackedPoint3<N> {
+    pub fn at_t(&self, t: Simd<Real, N>) -> PackedPoint3<N> {
         self.origins + self.directions * t
     }
 

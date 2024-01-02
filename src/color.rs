@@ -2,17 +2,18 @@ use crate::toml_utils::to_float;
 
 use std::simd::{Simd, Mask, LaneCount, SupportedLaneCount, cmp::SimdPartialOrd, SimdElement};
 use crate::simd_util::masked_assign;
+use crate::real::Real;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct Color {
-    red: f64,
-    green: f64,
-    blue: f64
+    red: Real,
+    green: Real,
+    blue: Real
 }
 
 impl Color {
-    pub fn new(red: f64, green: f64, blue: f64) -> Color {
+    pub fn new(red: Real, green: Real, blue: Real) -> Color {
         Color {
             red: red,
             green: green,
@@ -43,7 +44,7 @@ impl Color {
 
     // pub fn to_array(&self, max_pixel_value: u32) -> [u32; 3] 
     // {
-    //     let scale_factor = (max_pixel_value as f64 ) + 1.0 - 0.001;
+    //     let scale_factor = (max_pixel_value as Real ) + 1.0 - 0.001;
     //     let ir = (self.red.sqrt() * scale_factor) as u32;
     //     let ig = (self.green.sqrt() * scale_factor) as u32;
     //     let ib = (self.blue.sqrt() * scale_factor) as u32;
@@ -52,9 +53,9 @@ impl Color {
     // }
 
     pub fn to_u8_array(&self) -> [u8; 3]{
-        assert!(self.red <= 2.0, "red should be less than 1.0, but got {}", self.red);
-        assert!(self.green <= 2.0, "green should be less than 1.0, but got {}", self.green);
-        assert!(self.blue <= 2.0, "blue should be less than 1.0, but got {}", self.blue);
+        assert!(self.red <= 1.01, "red should be less than 1.0, but got {}", self.red);
+        assert!(self.green <= 1.01, "green should be less than 1.0, but got {}", self.green);
+        assert!(self.blue <= 1.01, "blue should be less than 1.0, but got {}", self.blue);
         let scale_factor = 255.999;
         let ir = (self.red.sqrt() * scale_factor) as u8;
         let ig = (self.green.sqrt() * scale_factor) as u8;
@@ -79,13 +80,13 @@ impl Color {
         }
 
         Color {
-            red: red / (count as f64),
-            green: green / (count as f64),
-            blue: blue / (count as f64),
+            red: red / (count as Real),
+            green: green / (count as Real),
+            blue: blue / (count as Real),
         }
     }
 
-    // pub fn mix(&self, other: &Color, other_ratio: f64) -> Color {
+    // pub fn mix(&self, other: &Color, other_ratio: Real) -> Color {
     //     debug_assert!((0.0..=1.0).contains(&other_ratio));
     //     let self_ratio = 1.0 - other_ratio;
 
@@ -138,11 +139,11 @@ impl std::ops::Mul<Color> for Color {
     }
 }
 
-impl std::ops::Mul<f64> for Color {
+impl std::ops::Mul<Real> for Color {
     type Output = Color;
 
     #[inline]
-    fn mul(self, rhs: f64) -> Self::Output {
+    fn mul(self, rhs: Real) -> Self::Output {
         Color{
             red: self.red * rhs,
             green: self.green * rhs,
@@ -151,11 +152,11 @@ impl std::ops::Mul<f64> for Color {
     }
 }
 
-impl std::ops::Div<f64> for Color {
+impl std::ops::Div<Real> for Color {
     type Output = Color;
 
     #[inline]
-    fn div(self, rhs: f64) -> Self::Output {
+    fn div(self, rhs: Real) -> Self::Output {
         Color{
             red: self.red / rhs,
             green: self.green / rhs,
@@ -176,9 +177,9 @@ impl std::fmt::Display for Color {
 pub struct PackedColor<const N: usize> 
 where LaneCount<N>: SupportedLaneCount
 {
-    red: Simd<f64, N>,
-    green: Simd<f64, N>,
-    blue: Simd<f64, N>
+    red: Simd<Real, N>,
+    green: Simd<Real, N>,
+    blue: Simd<Real, N>
 }
 
 impl <const N: usize> PackedColor<N> 
@@ -199,7 +200,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 
     #[inline]
-    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: Mask<<f64 as SimdElement>::Mask, N>) {
+    pub fn assign_masked(&mut self, colors: PackedColor<N>, mask: Mask<<Real as SimdElement>::Mask, N>) {
         
         masked_assign(&mut self.red, colors.red, mask);
         masked_assign(&mut self.green, colors.green, mask);
@@ -253,12 +254,12 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Mul<Simd<f64, N>> for PackedColor<N> 
+impl <const N: usize> std::ops::Mul<Simd<Real, N>> for PackedColor<N> 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedColor<N>;
     #[inline]
-    fn mul(self, rhs: Simd<f64, N>) -> Self::Output {
+    fn mul(self, rhs: Simd<Real, N>) -> Self::Output {
         PackedColor{
             red: self.red * rhs,
             green: self.green * rhs,
@@ -267,7 +268,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedColor<N>> for Simd<f64, N> 
+impl <const N: usize> std::ops::Mul<PackedColor<N>> for Simd<Real, N> 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedColor<N>;

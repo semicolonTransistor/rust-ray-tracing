@@ -2,23 +2,26 @@ use crate::ray_tracing::{Scene, Camera};
 use crate::color::{Color, PackedColor};
 use image::{Rgb, RgbImage};
 use crate::ray::PackedRays;
+use std::mem::size_of;
 use std::num::NonZeroUsize;
 use std::simd::{LaneCount, SupportedLaneCount};
 use itertools::Itertools;
 use std::sync::Arc;
 use console::Term;
 use std::io::Write;
+use crate::real::{Real, duration_as_secs_real};
 
 pub struct RenderStat{
     duration: std::time::Duration,
     pixels_rendered: usize,
-    pixels_per_second: f64,
+    pixels_per_second: Real,
+    detailed_stat: Option<toml::value::Table>,
 }
 
 impl RenderStat {
-    pub fn new(duration: std::time::Duration, pixels_rendered: usize) -> RenderStat {
-        let pixels_per_second = (pixels_rendered as f64) / duration.as_secs_f64();
-        RenderStat { duration, pixels_rendered, pixels_per_second}
+    pub fn new(duration: std::time::Duration, pixels_rendered: usize, detailed_stat: Option<toml::value::Table>) -> RenderStat {
+        let pixels_per_second = (pixels_rendered as Real) / (duration_as_secs_real(&duration));
+        RenderStat { duration, pixels_rendered, pixels_per_second, detailed_stat}
     }
 
     pub fn duration(&self) -> std::time::Duration {
@@ -29,7 +32,7 @@ impl RenderStat {
         self.pixels_rendered
     }
 
-    pub fn pixels_per_second(&self) -> f64 {
+    pub fn pixels_per_second(&self) -> Real {
         self.pixels_per_second
     }
 }
@@ -74,7 +77,7 @@ struct TileRenderResult {
     block_index_x: usize,
     block_index_y: usize,
     thread_id: usize,
-    average_pixel_throughput: f64,
+    average_pixel_throughput: Real,
     output: Vec<Rgb<u8>>   
 }
 
@@ -103,7 +106,7 @@ impl TileRenderTask {
             }
         }
         let duration = std::time::Instant::now().duration_since(start);
-        let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
+        let pixels_per_second = ((self.size_x * self.size_y) as Real) / (duration_as_secs_real(&duration));
 
         TileRenderResult {
             block_index_x: self.block_index_x,
@@ -115,16 +118,20 @@ impl TileRenderTask {
     }
 
     fn render_vectorized (&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(
+            all (
+                any(target_arch = "x86", target_arch = "x86_64"),
+                target_feature = "avx512f",
+                feature = "use_avx512"
+            )
+        )]
         {   
             // AVX512
-            if is_x86_feature_detected!("avx512f") {
-                return self.render_vectorized_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
-            }
+            return self.render_vectorized_impl::<{64 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
         }
 
         // assume 256 bit otherwise
-        return self.render_vectorized_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+        return self.render_vectorized_impl::<{32 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
     }
     
     fn render_vectorized_impl <const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult 
@@ -150,13 +157,13 @@ impl TileRenderTask {
                 }
 
                 let sum_color = packed_color.sum();
-                let pixel = sum_color / (samples_per_pixel as f64);
+                let pixel = sum_color / (samples_per_pixel as Real);
 
                 result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
             }
         }
         let duration = std::time::Instant::now().duration_since(start);
-        let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
+        let pixels_per_second = ((self.size_x * self.size_y) as Real) / (duration_as_secs_real(&duration));
 
         TileRenderResult {
             block_index_x: self.block_index_x,
@@ -168,16 +175,20 @@ impl TileRenderTask {
     }
 
     fn render_vectorized2(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(
+            all (
+                any(target_arch = "x86", target_arch = "x86_64"),
+                target_feature = "avx512f",
+                feature = "use_avx512"
+            )
+        )]
         {   
             // AVX512
-            if is_x86_feature_detected!("avx512f") {
-                return self.render_vectorized2_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
-            }
+            return self.render_vectorized2_impl::<{64 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
         }
 
         // assume 256 bit otherwise
-        return self.render_vectorized2_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+        return self.render_vectorized2_impl::<{32 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
     }
 
     fn render_vectorized2_impl<const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult 
@@ -202,13 +213,13 @@ impl TileRenderTask {
                     ray_chunks.push(chunk.collect());
                 }
 
-                let pixel = scene.trace_vectorized2(&ray_chunks, max_bounces) / (samples_per_pixel as f64);
+                let pixel = scene.trace_vectorized2(&ray_chunks, max_bounces) / (samples_per_pixel as Real);
 
                 result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
             }
         }
         let duration = std::time::Instant::now().duration_since(start);
-        let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
+        let pixels_per_second = ((self.size_x * self.size_y) as Real) / (duration_as_secs_real(&duration));
 
         TileRenderResult {
             block_index_x: self.block_index_x,
@@ -220,16 +231,19 @@ impl TileRenderTask {
     }
 
     fn render_vectorized3(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(
+            all (
+                any(target_arch = "x86", target_arch = "x86_64"),
+                target_feature = "avx512f",
+                feature = "use_avx512"
+            )
+        )]
         {   
-            // AVX512
-            if is_x86_feature_detected!("avx512f") {
-                return self.render_vectorized3_impl::<8>(camera, scene, max_bounces, samples_per_pixel, thread_id);
-            }
+            return self.render_vectorized3_impl::<{64 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
         }
 
         // assume 256 bit otherwise
-        return self.render_vectorized3_impl::<4>(camera, scene, max_bounces, samples_per_pixel, thread_id);
+        return self.render_vectorized3_impl::<{32 / size_of::<Real>()}>(camera, scene, max_bounces, samples_per_pixel, thread_id);
     }
 
     fn render_vectorized3_impl<const N: usize>(&self, camera: &Arc<Camera>, scene: &Arc<Scene>, max_bounces: usize, samples_per_pixel: usize, thread_id: usize) -> TileRenderResult
@@ -255,13 +269,13 @@ impl TileRenderTask {
                     ray_chunks.push(chunk.collect());
                 }
 
-                let pixel = scene.trace_vectorized3(&mut ray_chunks, max_bounces) / (samples_per_pixel as f64);
+                let pixel = scene.trace_vectorized3(&mut ray_chunks, max_bounces) / (samples_per_pixel as Real);
 
                 result[j * self.block_size + i] = Rgb(pixel.to_u8_array());
             }
         }
         let duration = std::time::Instant::now().duration_since(start);
-        let pixels_per_second = ((self.size_x * self.size_y) as f64) / duration.as_secs_f64();
+        let pixels_per_second = ((self.size_x * self.size_y) as Real) / (duration_as_secs_real(&duration));
 
         TileRenderResult {
             block_index_x: self.block_index_x,
@@ -449,7 +463,7 @@ impl Renderer for TileRenderer {
 
                 results[block_index_x + block_index_y * width_in_blocks].output[intra_block_x + intra_block_y * self.block_size.get()]
             }),
-            RenderStat::new(duration, camera.image_height() * camera.image_width())
+            RenderStat::new(duration, camera.image_height() * camera.image_width(), None)
         )
     }
 }

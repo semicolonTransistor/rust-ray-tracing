@@ -8,6 +8,7 @@ use crate::toml_utils::to_float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
+use crate::real::Real;
 
 pub fn get_materials(table: &toml::Table) -> HashMap<String, Arc<dyn Material>>{
     table.iter().map(|(key, value)| {
@@ -72,11 +73,11 @@ impl Material for Lambertian {
 #[derive(Clone)]
 pub struct Metal {
     albedo: Color,
-    fuzzy_factor: f64,
+    fuzzy_factor: Real,
 }
 
 impl Metal {
-    pub fn new(albedo: Color, fuzzy_factor: f64) -> Self {
+    pub fn new(albedo: Color, fuzzy_factor: Real) -> Self {
         Self { 
             albedo, 
             fuzzy_factor: if fuzzy_factor < 1.0 {
@@ -109,16 +110,16 @@ impl Material for Metal {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Dielectric {
-    index_of_refraction: f64,
+    index_of_refraction: Real,
     hollow: bool,
 }
 
 impl Dielectric {
-    pub fn new(index_of_refraction: f64, hollow: bool) -> Dielectric {
+    pub fn new(index_of_refraction: Real, hollow: bool) -> Dielectric {
         Dielectric { index_of_refraction, hollow}
     }
 
-    fn reflectance(cosine: f64, index_of_refraction: f64) -> f64 {
+    fn reflectance(cosine: Real, index_of_refraction: Real) -> Real {
         let r0 = ((1.0 - index_of_refraction) / (1.0 + index_of_refraction)).powi(2);
         r0 + (1.0 - r0) * (1.0 - cosine).powi(5)
     }

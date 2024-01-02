@@ -3,6 +3,7 @@
 
 mod geometry;
 mod color;
+mod real;
 mod ray_tracing;
 mod materials;
 mod renderer;
@@ -18,6 +19,7 @@ use ray_tracing::{Camera, Scene};
 use std::{sync::Arc, num::NonZeroUsize, path::{Path, PathBuf}, fs::File, io::Read, env::consts::ARCH};
 use renderer::TileRenderer;
 use crate::toml_utils::to_float;
+use crate::real::{Real, duration_as_secs_real};
 
 use crate::{materials::get_materials, objects::get_object_list, renderer::TileRenderMode};
 
@@ -168,7 +170,7 @@ fn main() -> image::ImageResult<()> {
 
     println!("Image Size: {} x {}", camera.image_width(), camera.image_height());
     println!("Total Pixels: {}", render_stat.pixels_rendered());
-    println!("Time Taken: {:.3} seconds", render_stat.duration().as_secs_f64());
+    println!("Time Taken: {:.3} seconds", duration_as_secs_real(&render_stat.duration()));
     println!("Average Pixel Rate: {:.2} px/s", render_stat.pixels_per_second());
 
     Ok(())
@@ -197,7 +199,7 @@ fn load_scene(table: &toml::value::Table) -> Arc<Scene>{
     )
 }
 
-fn load_camera(table: &toml::value::Table) -> Option<(f64, f64, Vec3, Vec3, Vec3, f64)> {
+fn load_camera(table: &toml::value::Table) -> Option<(Real, Real, Vec3, Vec3, Vec3, Real)> {
     let camera_toml_table = match table.get("camera") {
         Some(t) => t.as_table().unwrap(),
         None => return None,

@@ -3,17 +3,18 @@ use crate::toml_utils::to_float;
 use array_macro::array;
 use std::simd::{LaneCount, SupportedLaneCount, StdFloat, Simd, Mask, SimdElement, MaskElement};
 use crate::simd_util::masked_assign;
+use crate::real::Real;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct Vec3 {
-    x: f64,
-    y: f64,
-    z: f64
+    x: Real,
+    y: Real,
+    z: Real
 }
 
 impl Vec3 {
-    pub fn new(x: f64, y: f64, z: f64) -> Vec3{
+    pub fn new(x: Real, y: Real, z: Real) -> Vec3{
         Vec3 { x: x, y: y, z: z}
     }
 
@@ -21,15 +22,15 @@ impl Vec3 {
         Vec3 {x: 0.0, y: 0.0, z: 0.0}
     }
 
-    pub fn x(&self) -> f64 {
+    pub fn x(&self) -> Real {
         self.x
     }
 
-    pub fn y(&self) -> f64 {
+    pub fn y(&self) -> Real {
         self.y
     }
 
-    pub fn z(&self) -> f64 {
+    pub fn z(&self) -> Real {
         self.z
     }
 }
@@ -56,9 +57,9 @@ impl std::ops::Sub for Vec3 {
     }
 }
 
-impl std::ops::Mul<f64> for Vec3 {
+impl std::ops::Mul<Real> for Vec3 {
     type Output = Self;
-    fn mul(self, rhs: f64) -> Self {
+    fn mul(self, rhs: Real) -> Self {
         Self {
             x: self.x * rhs,
             y: self.y * rhs,
@@ -67,16 +68,16 @@ impl std::ops::Mul<f64> for Vec3 {
     }
 }
 
-impl std::ops::Mul<Vec3> for f64{
+impl std::ops::Mul<Vec3> for Real {
     type Output = Vec3;
     fn mul(self, rhs: Vec3) -> Vec3 {
         rhs * self
     }
 }
 
-impl std::ops::Div<f64> for Vec3 {
+impl std::ops::Div<Real> for Vec3 {
     type Output = Self;
-    fn div(self, rhs: f64) -> Self::Output {
+    fn div(self, rhs: Real) -> Self::Output {
         Self {
             x: self.x / rhs,
             y: self.y / rhs,
@@ -103,15 +104,15 @@ impl std::fmt::Display for Vec3 {
 }
 
 impl Vec3 {
-    pub fn length_squared(&self) -> f64 {
+    pub fn length_squared(&self) -> Real {
         self.x.powi(2) + self.y.powi(2) + self.z.powi(2)
     }
 
-    pub fn length(&self) -> f64 {
+    pub fn length(&self) -> Real {
         self.length_squared().sqrt()
     }
 
-    pub fn abs(&self) -> f64 {
+    pub fn abs(&self) -> Real {
         self.length()
     }
 
@@ -119,7 +120,7 @@ impl Vec3 {
         self / self.length()
     }
 
-    pub fn dot(&self, rhs: &Self) -> f64 {
+    pub fn dot(&self, rhs: &Self) -> Real {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
@@ -153,8 +154,8 @@ impl Vec3 {
 
     pub fn random_in_unit_disk() -> Vec3 {
         loop {
-            let x: f64 = thread_rng().gen_range(-1.0..=1.0);
-            let y: f64 = thread_rng().gen_range(-1.0..=1.0);
+            let x: Real = thread_rng().gen_range(-1.0..=1.0);
+            let y: Real = thread_rng().gen_range(-1.0..=1.0);
 
             if x.powi(2) + y.powi(2) <= 1.0 {
                 return Vec3 {
@@ -180,7 +181,7 @@ impl Vec3 {
         (*self) - 2.0 * self.dot(normal) * (*normal)
     }
 
-    pub fn refract(self, normal: &Vec3, refraction_ratio: f64) -> Vec3{
+    pub fn refract(self, normal: &Vec3, refraction_ratio: Real) -> Vec3{
         let cos_theta = (-self).dot(normal).min(1.0);
         let r_out_perpendicular = refraction_ratio * (self + cos_theta * (*normal));
         let r_out_parallel = -((1.0 - r_out_perpendicular.length_squared()).abs().sqrt()) * (*normal);
@@ -221,16 +222,16 @@ pub struct PackedVec3<const N: usize>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    x: Simd<f64, N>,
-    y: Simd<f64, N>,
-    z: Simd<f64, N>
+    x: Simd<Real, N>,
+    y: Simd<Real, N>,
+    z: Simd<Real, N>
 }
 
 pub type PackedPoint3<const N:usize> = PackedVec3<N>;
 
 impl <M, const N: usize> PackedVec3<N> 
 where
-    f64: SimdElement<Mask = M>,
+    Real: SimdElement<Mask = M>,
     M: MaskElement,
     LaneCount<N>: SupportedLaneCount,
 {
@@ -244,7 +245,7 @@ where
     }
 
     #[inline]
-    pub fn from_simd(x: Simd<f64, N>, y: Simd<f64, N>, z: Simd<f64, N>) -> PackedVec3<N>{
+    pub fn from_simd(x: Simd<Real, N>, y: Simd<Real, N>, z: Simd<Real, N>) -> PackedVec3<N>{
         PackedVec3 {
             x,
             y,
@@ -353,13 +354,13 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Mul<f64> for PackedVec3<N>
+impl <const N: usize> std::ops::Mul<Real> for PackedVec3<N>
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedVec3<N>;
 
     #[inline]
-    fn mul(self, rhs: f64) -> Self::Output {
+    fn mul(self, rhs: Real) -> Self::Output {
         let rhs_as_simd = Simd::splat(rhs);
         PackedVec3 {
             x: self.x * rhs_as_simd,
@@ -369,13 +370,13 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Mul<Simd<f64, N>> for PackedVec3<N> 
+impl <const N: usize> std::ops::Mul<Simd<Real, N>> for PackedVec3<N> 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedVec3<N>;
 
     #[inline]
-    fn mul(self, rhs: Simd<f64, N>) -> Self::Output {
+    fn mul(self, rhs: Simd<Real, N>) -> Self::Output {
         PackedVec3 {
             x: self.x * rhs,
             y: self.y * rhs,
@@ -384,7 +385,7 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Mul<PackedVec3<N>> for f64 
+impl <const N: usize> std::ops::Mul<PackedVec3<N>> for Real 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedVec3<N>;
@@ -395,13 +396,13 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Div<Simd<f64, N>> for PackedVec3<N> 
+impl <const N: usize> std::ops::Div<Simd<Real, N>> for PackedVec3<N> 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedVec3<N>;
 
     #[inline]
-    fn div(self, rhs: Simd<f64, N>) -> Self::Output {
+    fn div(self, rhs: Simd<Real, N>) -> Self::Output {
         PackedVec3 {
             x: self.x / rhs,
             y: self.y / rhs,
@@ -410,13 +411,13 @@ where LaneCount<N>: SupportedLaneCount
     }
 }
 
-impl <const N: usize> std::ops::Div<f64> for PackedVec3<N> 
+impl <const N: usize> std::ops::Div<Real> for PackedVec3<N> 
 where LaneCount<N>: SupportedLaneCount
 {
     type Output = PackedVec3<N>;
 
     #[inline]
-    fn div(self, rhs: f64) -> Self::Output {
+    fn div(self, rhs: Real) -> Self::Output {
         let rhs_as_simd = Simd::splat(rhs);
         PackedVec3 {
             x: self.x / rhs_as_simd,
@@ -431,12 +432,12 @@ where LaneCount<N>: SupportedLaneCount
 {
     
     #[inline]
-    pub fn length_squared(&self) -> Simd<f64, N> {
+    pub fn length_squared(&self) -> Simd<Real, N> {
         self.z.mul_add(self.z , self.y.mul_add(self.y, self.x * self.x))
     }
 
     #[inline]
-    pub fn length(&self) -> Simd<f64, N> {
+    pub fn length(&self) -> Simd<Real, N> {
         self.length_squared().sqrt()
     }
 
@@ -463,22 +464,22 @@ where LaneCount<N>: SupportedLaneCount
     }
 
     #[inline]
-    pub fn dot(&self, rhs: &Self) -> Simd<f64, N> {
+    pub fn dot(&self, rhs: &Self) -> Simd<Real, N> {
         self.z.mul_add(rhs.z , self.y.mul_add(rhs.y, self.x * rhs.x))
     }
 
     #[inline]
-    pub fn x(&self) -> Simd<f64, N> {
+    pub fn x(&self) -> Simd<Real, N> {
         self.x
     }
 
     #[inline]
-    pub fn y(&self) -> Simd<f64, N> {
+    pub fn y(&self) -> Simd<Real, N> {
         self.y
     }
 
     #[inline]
-    pub fn z(&self) -> Simd<f64, N> {
+    pub fn z(&self) -> Simd<Real, N> {
         self.z
     }
 
